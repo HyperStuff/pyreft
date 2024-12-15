@@ -301,22 +301,15 @@ class TokenSelectiveLoreftIntervention(LoreftIntervention):
     where M are weights for each token.
     """
 
-    def __init__(
-        self,
-        num_heads: int,
-        start_temperature: float,
-        end_temperature: int,
-        total_steps: int,
-        **kwargs,
-    ):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs, keep_last_dim=True)
 
         self.selection = TokenSelectionAttention(
             embed_dim=self.embed_dim,
-            num_heads=num_heads,
-            start_temperature=start_temperature,
-            end_temperature=end_temperature,
-            total_steps=total_steps,
+            num_heads=kwargs["num_heads"],
+            start_temperature=kwargs["start_temperature"], 
+            end_temperature=kwargs["end_temperature"],
+            total_steps=kwargs["total_steps"],
             dropout=self.dropout,
         )
 
