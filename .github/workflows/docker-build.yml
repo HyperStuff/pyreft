@@ -2,7 +2,7 @@ name: build-push-cuda-docker-image
 
 on:
   push:
-    branches: [main]
+    branches: [hyperreft]
     paths:
       - "requirements*.txt"
       - "Dockerfile"
