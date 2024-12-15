@@ -1,22 +1,16 @@
 name: build-push-cuda-docker-image
 
 on:
+  workflow_dispatch:
   push:
-    branches: [hyperreft]
+    branches:
+      - hyperreft
     paths:
       - "requirements*.txt"
       - "Dockerfile"
       - "docker-compose*.yml"
       - ".docker/**"
-      - ".github/workflows/docker-build.yaml"
-  pull_request:
-    branches: [main]
-    paths:
-      - "requirements*.txt"
-      - "Dockerfile"
-      - "docker-compose*.yml"
-      - ".docker/**"
-      - ".github/workflows/docker-build.yaml"
+      - ".github/workflows/docker-build.yml"
 
 permissions:
   contents: read
