@@ -1,0 +1,65 @@
+name: build-push-cuda-docker-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "requirements*.txt"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - ".docker/**"
+      - ".github/workflows/docker-build.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "requirements*.txt"
+      - "Dockerfile"
+      - "docker-compose*.yml"
+      - ".docker/**"
+      - ".github/workflows/docker-build.yaml"
+
+permissions:
+  contents: read
+  packages: write
+  # Add these permissions
+  actions: write
+  checks: write
+  deployments: write
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup NVIDIA Container Toolkit
+        run: |
+          distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+          curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+          curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+          sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+
+      - name: Create minimal .env file
+        run: |
+          echo "GIT_EMAIL=${{ secrets.GIT_EMAIL }}" > .env
+          echo "GIT_NAME=${{ secrets.GIT_NAME }}" >> .env
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push with Docker Compose
+        env:
+          GITHUB_USERNAME: ${{ github.actor }}
+          GIT_EMAIL: ${{ secrets.GIT_EMAIL }}
+          GIT_NAME: ${{ secrets.GIT_NAME }}
+        run: |
+          docker compose build hyperreft
+          docker compose push hyperreft

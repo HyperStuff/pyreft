@@ -1,0 +1,71 @@
+defaults:
+  - _self_
+
+# Model settings
+model:
+  name: "yahma/llama-7b-hf"
+  dtype: "bfloat16"
+  max_length: 512
+
+# Training settings
+training:
+  seed: 42
+  epochs: 1
+  batch_size: 4
+  eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 5e-3
+  schedule: "linear"
+  warmup_ratio: 0.0
+  weight_decay: 0.0
+  dropout: 0.0
+  logging_steps: 1
+
+# Intervention settings
+intervention:
+  type: "LoreftIntervention"
+  layers: "2;10;18;26"
+  rank: 8
+  position: "f1+l1"
+  act_fn: null
+  add_bias: false
+  share_weights: false
+
+# LoRA settings
+lora:
+  use_lora: false
+  disable_reft: false
+  rank: 8
+  alpha: 32
+  modules: "o_proj"
+  layers: "2;10;18;26"
+
+# Task settings
+task:
+  name: null
+  data_dir: "./datasets"
+  train_dataset: null
+  eval_dataset: null
+  test_split: "validation"
+  train_on_inputs: false
+  use_normalized_template: false
+  allow_cls_grad: false
+  metric_for_best_model: "accuracy"
+  max_n_train_example: null
+  max_n_eval_example: null
+
+# Decoding settings
+decoding:
+  greedy_decoding: false
+  temperature: null
+  top_p: null
+  top_k: null
+
+# Logging settings
+logging:
+  is_wandb: false
+  wandb_name: "reft"
+  wandb_dir: "wandb"
+  wandb_proj: "MyReFT"
+  output_dir: "./official_results"
+  save_model: false
