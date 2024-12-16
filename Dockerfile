@@ -57,7 +57,8 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone &
 COPY requirements.txt .
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     /root/.local/bin/uv pip install --system --no-cache-dir --upgrade pip setuptools wheel && \
-    /root/.local/bin/uv pip install --system --no-cache-dir -r requirements.txt
+    /root/.local/bin/uv pip install --system --no-cache-dir -r requirements.txt && \
+    /root/.local/bin/uv pip install --system --no-cache-dir "ray[default]"    
 
 # Set up entrypoint
 COPY scripts/entrypoint.sh /usr/local/bin/

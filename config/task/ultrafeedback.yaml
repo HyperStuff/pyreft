@@ -1,0 +1,19 @@
+defaults:
+  - base
+  - _self_
+
+name: ultrafeedback
+train_dataset: ["ultrafeedback"]
+eval_dataset: ["alpaca_eval"]
+prompt_template: ${alpaca_prompt_template}
+trigger_tokens: "### Response:"
+
+decoding:
+  greedy:
+    max_length: 2048
+    do_sample: false
+  default:
+    max_length: 2048
+    no_repeat_ngram_size: 5
+    repetition_penalty: 1.1
+    do_sample: false

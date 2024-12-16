@@ -71,11 +71,16 @@ intervention_mapping = {
 }
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="loreft_attentive")
+@hydra.main(
+    version_base=None,
+    config_path="/workspace/pyreft/config",
+    config_name="loreft_attentive",
+)
 def finetune(cfg: DictConfig):
     """
     Generic Representation Finetuning.
     """
+
     assert cfg.task.name in {
         "commonsense",
         "math",
@@ -148,23 +153,16 @@ def finetune(cfg: DictConfig):
 
     # load dataset splits
     assert cfg.task.name in task_config, f"Unrecognized task: {cfg.task.name}"
-    train_datasets = (
-        task_config[cfg.task.name]["train_datasets"]
-        if cfg.task.train_dataset is None
-        else [cfg.task.train_dataset]
-    )
+    train_datasets = cfg.task.train_dataset
     if cfg.task.name == "glue":
-        eval_datasets = [cfg.task.train_dataset]
+        eval_datasets = cfg.task.train_dataset
     else:
-        eval_datasets = (
-            task_config[cfg.task.name]["eval_datasets"]
-            if cfg.task.eval_dataset is None
-            else [cfg.task.eval_dataset]
-        )
+        eval_datasets = cfg.task.eval_dataset
 
     ReftDataset = (
         LoReftGLUEDataset if cfg.task.name == "glue" else LoReftSupervisedDataset
     )
+
     train_dataset = ReftDataset(
         cfg.task.name,
         train_datasets[0]
@@ -279,6 +277,12 @@ def finetune(cfg: DictConfig):
                     act_fn=cfg.intervention.act_fn,
                     device=device,
                     add_bias=cfg.intervention.add_bias,
+                    total_steps=cfg.training.epochs
+                    * len(train_dataset)
+                    // (
+                        cfg.training.batch_size
+                        * cfg.training.gradient_accumulation_steps
+                    ),
                 ),
             }
             for l in layers
@@ -300,6 +304,12 @@ def finetune(cfg: DictConfig):
                     act_fn=cfg.intervention.act_fn,
                     device=device,
                     add_bias=cfg.intervention.add_bias,
+                    total_steps=cfg.training.epochs
+                    * len(train_dataset)
+                    // (
+                        cfg.training.batch_size
+                        * cfg.training.gradient_accumulation_steps
+                    ),
                 ),
             }
             for l in layers

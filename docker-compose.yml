@@ -1,8 +1,8 @@
 services:
-  hyperreft:
+  pyreft:
     restart: always
-    container_name: hyperreft
-    image: ghcr.io/${GITHUB_USERNAME}/hyperreft:latest
+    container_name: ${PROJECT_NAME}
+    image: ghcr.io/${GIT_NAME}/${PROJECT_NAME}:latest
     build:
       context: .
       dockerfile: ./Dockerfile
@@ -11,7 +11,7 @@ services:
         GIT_NAME: ${GIT_NAME}
     volumes:
       - .:/workspace/pyreft
-      - ./assets:/workspace/HyperDAS/assets
+      - ./assets:/workspace/pyreft/assets
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ./.vscode-server:/.vscode-server
       - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro

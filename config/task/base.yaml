@@ -1,0 +1,11 @@
+name: null
+data_dir: "./datasets"
+train_dataset: null
+eval_dataset: null
+test_split: "validation"
+train_on_inputs: false
+use_normalized_template: false
+allow_cls_grad: false
+metric_for_best_model: "accuracy"
+max_n_train_example: null
+max_n_eval_example: null

@@ -1,0 +1,20 @@
+defaults:
+  - base
+  - _self_
+
+name: gsm8k
+train_dataset: ["gsm8k"]
+eval_dataset: ["gsm8k"]
+prompt_template: ${gsm8k_template}
+trigger_tokens: "First think step by step and then answer the final number.\n"
+
+decoding:
+  greedy:
+    max_new_tokens: 256
+    do_sample: false
+  default:
+    max_new_tokens: 256
+    temperature: 0.1
+    top_p: 0.95
+    top_k: 40
+    do_sample: true

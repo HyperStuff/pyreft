@@ -41,6 +41,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+#hydra
+outputs/
+multirun/
+
 # C extensions
 *.so
 

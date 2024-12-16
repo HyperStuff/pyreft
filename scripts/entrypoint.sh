@@ -34,7 +34,7 @@ echo "🔧 Setting up git configuration..."
 
 git config --global --replace-all user.email "${GIT_EMAIL}"
 git config --global --replace-all user.name "${GIT_NAME}"
-git config --global --replace-all safe.directory /workspace/HyperDAS
+git config --global --replace-all safe.directory /workspace/${PROJECT_ROOT}
 
 echo "🚀 Container is ready!"
 echo "-----------------------------------"

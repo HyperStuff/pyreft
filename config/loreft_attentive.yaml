@@ -1,5 +1,6 @@
 defaults:
   - _self_
+  - task: base
 
 # Model settings
 model:
@@ -39,27 +40,6 @@ lora:
   alpha: 32
   modules: "o_proj"
   layers: "2;10;18;26"
-
-# Task settings
-task:
-  name: null
-  data_dir: "./datasets"
-  train_dataset: null
-  eval_dataset: null
-  test_split: "validation"
-  train_on_inputs: false
-  use_normalized_template: false
-  allow_cls_grad: false
-  metric_for_best_model: "accuracy"
-  max_n_train_example: null
-  max_n_eval_example: null
-
-# Decoding settings
-decoding:
-  greedy_decoding: false
-  temperature: null
-  top_p: null
-  top_k: null
 
 # Logging settings
 logging:

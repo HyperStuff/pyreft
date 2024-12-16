@@ -1,0 +1,21 @@
+defaults:
+  - base
+  - _self_
+
+name: math
+train_dataset: ["math_10k"]
+eval_dataset: ["MultiArith", "gsm8k", "SVAMP", "mawps", "AddSub", "AQuA", "SingleEq"]
+prompt_template: ${alpaca_prompt_no_input_template}
+trigger_tokens: "### Response:"
+
+decoding:
+  greedy:
+    max_new_tokens: 512
+    do_sample: false
+  default:
+    max_new_tokens: 512
+    temperature: 0.3
+    top_p: 0.75
+    top_k: 40
+    num_beams: 4
+    do_sample: true
