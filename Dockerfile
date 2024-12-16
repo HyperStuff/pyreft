@@ -43,7 +43,6 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone &
     apt-get install -y --no-install-recommends \
     python3.12 \
     python3.12-dev \
-    python3.12-distutils \
     python3.12-venv && \
     ln -sf /usr/bin/python3.12 /usr/bin/python && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12 && \
