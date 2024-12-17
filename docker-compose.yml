@@ -1,24 +1,27 @@
 services:
   pyreft:
     restart: always
-    container_name: ${PROJECT_NAME}
-    image: ghcr.io/${GIT_NAME}/${PROJECT_NAME}:latest
+    container_name: ${PROJECT_NAME}-dev
+    image: ${PROJECT_NAME}:latest  # Local project image
+    env_file: .env
     build:
       context: .
       dockerfile: ./Dockerfile
       args:
-        GIT_EMAIL: ${GIT_EMAIL}
-        GIT_NAME: ${GIT_NAME}
+        - GIT_EMAIL=${GIT_EMAIL}
+        - GIT_NAME=${GIT_NAME}
+        - PROJECT_NAME=${PROJECT_NAME}
     volumes:
-      - .:/workspace/pyreft
-      - ./assets:/workspace/pyreft/assets
+      - .:/workspace/${PROJECT_NAME}
+      - ./assets:/workspace/${PROJECT_NAME}/assets
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ./.vscode-server:/.vscode-server
       - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
     ports:
-      - "8765:8265" # Changed from 8266:8265
+      - "8765:8265"
       - "10001:10001"
       - "6379:6379"
+    
     command: >
       bash -c "
       ray start --head
@@ -30,7 +33,7 @@ services:
       --node-ip-address=0.0.0.0
       --block &&
       tail -f /dev/null"
-    env_file: .env
+    
     deploy:
       resources:
         reservations:
@@ -39,7 +42,6 @@ services:
               count: all
               capabilities: [gpu]
     ipc: host
-
     healthcheck:
       test: ["CMD-SHELL", "test -s `which nvidia-smi` && nvidia-smi || exit 1"]
       start_period: 1s

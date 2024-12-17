@@ -1,6 +1,12 @@
 defaults:
   - _self_
   - task: base
+  - override hydra/launcher: ray_jobs
+
+hydra:
+  launcher:
+    poll_jobs: false
+    entrypoint_num_gpus: 1
 
 # Model settings
 model:
@@ -24,13 +30,17 @@ training:
 
 # Intervention settings
 intervention:
-  type: "LoreftIntervention"
+  type: "TokenSelectiveLoreftIntervention"
   layers: "2;10;18;26"
   rank: 8
-  position: "f1+l1"
+  position: "f256+l256"
   act_fn: null
   add_bias: false
   share_weights: false
+  # For token selective attn module
+  num_heads: 4
+  start_temperature: 1
+  end_temperature: 1e-3
 
 # LoRA settings
 lora:
@@ -44,8 +54,8 @@ lora:
 # Logging settings
 logging:
   is_wandb: false
-  wandb_name: "reft"
-  wandb_dir: "wandb"
-  wandb_proj: "MyReFT"
+  wandb_name: null
+  wandb_proj: "HyperReFT"
+  wandb_entity: "sidharth-baskaran-georgia-institute-of-technology"
   output_dir: "./official_results"
   save_model: false

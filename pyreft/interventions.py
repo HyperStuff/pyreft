@@ -1,9 +1,7 @@
 from collections import OrderedDict
 
 import torch
-from numpy import require
 from pyvene import (
-    ConstantSourceIntervention,
     DistributedRepresentationIntervention,
     SourcelessIntervention,
     TrainableIntervention,
@@ -250,6 +248,7 @@ class TokenSelectionAttention(torch.nn.Module):
         end_temperature: int,
         total_steps: int,
         dropout: float = 0.0,
+        dtype: torch.dtype = torch.float32,
     ) -> None:
         super().__init__()
 
@@ -260,17 +259,14 @@ class TokenSelectionAttention(torch.nn.Module):
         self.total_steps = total_steps
 
         self.temperature = torch.nn.Parameter(
-            torch.ones(1, 1, self.num_heads, 1) * self.start_temperature,
+            torch.ones(1, 1, 1, dtype=dtype) * self.start_temperature,
             requires_grad=False,
         )
 
-        self.concat_proj = torch.nn.Linear(self.embed_dim * 2, self.embed_dim)
         self.attn = torch.nn.MultiheadAttention(
-            self.embed_dim, self.num_heads, dropout=dropout
+            self.embed_dim, self.num_heads, dropout=dropout, dtype=dtype
         )
-        self.down_proj = torch.nn.Linear(self.embed_dim, 1)
-        self.softmax = torch.nn.Softmax(dim=-2)
-
+        self.down_proj = torch.nn.Linear(self.embed_dim, 1, dtype=dtype)
         self._current_step = 0
 
         self.register_backward_hook(self._update_temperature)
@@ -282,38 +278,34 @@ class TokenSelectionAttention(torch.nn.Module):
         ) * (self._current_step / self.total_steps)
         self.temperature.data.fill_(current_temp)
 
-    def forward(
-        self, source_representation: torch.Tensor, base_representation: torch.Tensor
-    ) -> torch.Tensor:
-        condensed_states = torch.cat(
-            [source_representation, base_representation], dim=-1
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out, _ = self.attn(x, x, x)
+        selection_mask = torch.nn.functional.sigmoid(
+            self.down_proj(out) / self.temperature
         )
-        condensed_states = self.concat_proj(condensed_states)
-
-        attn_output = self.attn(condensed_states, condensed_states, condensed_states)
-        selection_mask = self.softmax(self.down_proj(attn_output) / self.temperature)
         return selection_mask
 
 
 class TokenSelectiveLoreftIntervention(LoreftIntervention):
     """
-    TokenSelectiveLoreft(h) = M*(h + R^T(Wh + b - Rh)))
-    where M are weights for each token.
+    TokenSelectiveLoreft(h) = M(h)*(h + R^T(Wh + b - Rh)))
+    where M(h) are weights for each token.
     """
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs, keep_last_dim=True)
+        super().__init__(**kwargs)
 
         self.selection = TokenSelectionAttention(
             embed_dim=self.embed_dim,
             num_heads=kwargs["num_heads"],
-            start_temperature=kwargs["start_temperature"], 
+            start_temperature=kwargs["start_temperature"],
             end_temperature=kwargs["end_temperature"],
             total_steps=kwargs["total_steps"],
-            dropout=self.dropout,
+            dropout=kwargs["dropout"],
+            dtype=kwargs["dtype"],
         )
 
     def forward(self, base, source=None, subspaces=None):
         intervened_output = super().forward(base, source, subspaces)
-        selection_mask = self.selection(source, base)
+        selection_mask = self.selection(base)
         return intervened_output * selection_mask

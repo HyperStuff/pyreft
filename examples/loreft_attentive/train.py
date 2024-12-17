@@ -8,7 +8,6 @@ import hydra
 import numpy as np
 import torch
 import wandb
-from compute_metrics import compute_metrics
 from dataset import LoReftGLUEDataset, LoReftSupervisedDataset
 from omegaconf import DictConfig, OmegaConf
 from task_config import task_config
@@ -24,6 +23,7 @@ from transformers import (
 )
 from transformers.trainer_utils import EvalPrediction
 
+from examples.loreft_attentive.compute_metrics import compute_metrics
 from pyreft import (
     ConsreftIntervention,  # constant bias only  # constant bias only
     DireftIntervention,  # direct edit reft  # direct edit reft
@@ -31,6 +31,7 @@ from pyreft import (
     LoreftIntervention,
     NodireftIntervention,  # remove ortho + direct edit reft <- this is like LoRA on time-step  # remove ortho + direct edit reft <- this is like LoRA on time-step
     NoreftIntervention,  # remove ortho.  # remove ortho.
+    TokenSelectiveLoreftIntervention,
     ReftConfig,
     ReftDataCollator,
     ReftTrainerForCausalLM,
@@ -38,7 +39,6 @@ from pyreft import (
     TaskType,
     get_reft_model,
 )
-from pyreft.interventions import TokenSelectiveLoreftIntervention
 
 try:
     # This library is our indicator that the required installs
@@ -264,26 +264,28 @@ def finetune(cfg: DictConfig):
     model_arch = model.config.architectures[0].lower()
     intervention_dtype = torch.bfloat16 if isinstance(dtype, str) else dtype
 
+    intervention_obj = intervention_type(
+        num_heads=cfg.intervention.num_heads,
+        embed_dim=model.config.hidden_size,
+        low_rank_dimension=cfg.intervention.rank,
+        dropout=cfg.training.dropout,
+        dtype=intervention_dtype,
+        act_fn=cfg.intervention.act_fn,
+        device=device,
+        add_bias=cfg.intervention.add_bias,
+        total_steps=cfg.training.epochs
+        * len(train_dataset)
+        // (cfg.training.batch_size * cfg.training.gradient_accumulation_steps),
+        start_temperature=cfg.intervention.start_temperature,
+        end_temperature=cfg.intervention.end_temperature,
+    )
+
     if model_arch in residual_stream_component_mapping:
         representations = [
             {
                 "component": residual_stream_component_mapping[model_arch] % l,
                 "low_rank_dimension": cfg.intervention.rank,
-                "intervention": intervention_type(
-                    embed_dim=model.config.hidden_size,
-                    low_rank_dimension=cfg.intervention.rank,
-                    dropout=cfg.training.dropout,
-                    dtype=intervention_dtype,
-                    act_fn=cfg.intervention.act_fn,
-                    device=device,
-                    add_bias=cfg.intervention.add_bias,
-                    total_steps=cfg.training.epochs
-                    * len(train_dataset)
-                    // (
-                        cfg.training.batch_size
-                        * cfg.training.gradient_accumulation_steps
-                    ),
-                ),
+                "intervention": intervention_obj,
             }
             for l in layers
         ]
@@ -296,30 +298,15 @@ def finetune(cfg: DictConfig):
                 if cfg.lora.use_lora
                 else "block_output",
                 "low_rank_dimension": cfg.intervention.rank,
-                "intervention": intervention_type(
-                    embed_dim=model.config.hidden_size,
-                    low_rank_dimension=cfg.intervention.rank,
-                    dropout=cfg.training.dropout,
-                    dtype=intervention_dtype,
-                    act_fn=cfg.intervention.act_fn,
-                    device=device,
-                    add_bias=cfg.intervention.add_bias,
-                    total_steps=cfg.training.epochs
-                    * len(train_dataset)
-                    // (
-                        cfg.training.batch_size
-                        * cfg.training.gradient_accumulation_steps
-                    ),
-                ),
+                "intervention": intervention_obj,
             }
             for l in layers
         ]
         task_type = TaskType.CAUSAL_LM
 
     reft_config = ReftConfig(representations=representations)
-    reft_model = get_reft_model(
-        model, reft_config, set_device=not isinstance(dtype, str)
-    )
+    reft_model = get_reft_model(model.to(device), reft_config, set_device=True)
+
     if cfg.lora.use_lora:
         reft_model.model.enable_adapter_layers()
     reft_model.print_trainable_parameters()
@@ -333,13 +320,18 @@ def finetune(cfg: DictConfig):
     n_params = reft_model.count_parameters(include_model=False)
     n_params_with_model = reft_model.count_parameters(include_model=True)
 
+    # Create wandb run name with intervention type and base model
+    base_model_name = model_name.split("/")[-1]
+    intervention_type_name = cfg.intervention.type.replace("Intervention", "")
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_name = f"{intervention_type_name}_{base_model_name}_{timestamp}"
+
     # start wandb logging
     if cfg.logging.is_wandb:
         run = wandb.init(
-            project=f"{cfg.logging.wandb_proj}_{cfg.task.name}",
-            entity=cfg.logging.wandb_name,
+            project=cfg.logging.wandb_proj,
+            entity=cfg.logging.wandb_entity,
             name=run_name,
-            dir=cfg.logging.wandb_dir,
         )
         run.summary.update(OmegaConf.to_container(cfg, resolve=True))
         wandb.log(

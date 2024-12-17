@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e  # Exit on error
 
+# Change to project directory if PROJECT_NAME is set
+if [ ! -z "${PROJECT_NAME}" ]; then
+    cd /workspace/${PROJECT_NAME}
+fi
+
 # Print system information
 echo "🖥️  Container System Information:"
 nvidia-smi
@@ -34,7 +39,7 @@ echo "🔧 Setting up git configuration..."
 
 git config --global --replace-all user.email "${GIT_EMAIL}"
 git config --global --replace-all user.name "${GIT_NAME}"
-git config --global --replace-all safe.directory /workspace/${PROJECT_ROOT}
+git config --global --replace-all safe.directory /workspace/${PWD}
 
 echo "🚀 Container is ready!"
 echo "-----------------------------------"
