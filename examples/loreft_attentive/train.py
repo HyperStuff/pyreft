@@ -333,7 +333,7 @@ def finetune(cfg: DictConfig):
             entity=cfg.logging.wandb_entity,
             name=run_name,
         )
-        run.summary.update(OmegaConf.to_container(cfg, resolve=True))
+        run.summary.update(OmegaConf.to_container(cfg, resolve=False))
         wandb.log(
             {
                 "train/n_params": n_params,

@@ -4,14 +4,14 @@ import argparse
 from tqdm import tqdm, trange
 from transformers import (
     AutoConfig,
-    AutoTokenizer, 
-    AutoModelForCausalLM, 
+    AutoTokenizer,
+    AutoModelForCausalLM,
     AutoModelForSequenceClassification,
     DataCollatorForSeq2Seq,
     DataCollatorWithPadding,
     get_linear_schedule_with_warmup,
     set_seed,
-    TrainingArguments
+    TrainingArguments,
 )
 from transformers.trainer_utils import EvalPrediction
 import wandb
@@ -33,21 +33,22 @@ from pyreft import (
     TaskType,
     get_reft_model,
     ReftConfig,
-    ReftTrainerForCausalLM, 
+    ReftTrainerForCausalLM,
     ReftTrainerForSequenceClassification,
-    NoreftIntervention,   # remove ortho.
+    NoreftIntervention,  # remove ortho.
     LoreftIntervention,
-    ConsreftIntervention, # constant bias only
-    LobireftIntervention, # low-rank bitfit reft
-    DireftIntervention,   # direct edit reft
-    NodireftIntervention, # remove ortho + direct edit reft <- this is like LoRA on time-step
-    ReftDataCollator
+    ConsreftIntervention,  # constant bias only
+    LobireftIntervention,  # low-rank bitfit reft
+    DireftIntervention,  # direct edit reft
+    NodireftIntervention,  # remove ortho + direct edit reft <- this is like LoRA on time-step
+    ReftDataCollator,
 )
 
 try:
     # This library is our indicator that the required installs
     # need to be done.
     import peft
+
     is_peft_available = True
 except ModuleNotFoundError:
     is_peft_available = False
@@ -116,7 +117,7 @@ def finetune(
     temperature: float,
     top_p: float,
     top_k: float,
-    disable_reft: bool, # this will run baselines with LoRA only
+    disable_reft: bool,  # this will run baselines with LoRA only
     use_lora: bool,
     lora_rank: int,
     lora_alpha: int,
@@ -129,12 +130,18 @@ def finetune(
     """
 
     assert task in {
-        "commonsense", "math", "alpaca", "instruct", "ultrafeedback", "glue", "gsm8k",
-        "ultrafeedback_pair"
+        "commonsense",
+        "math",
+        "alpaca",
+        "instruct",
+        "ultrafeedback",
+        "glue",
+        "gsm8k",
+        "ultrafeedback_pair",
     }
 
     dtype = dtype_mapping[dtype]
-    
+
     # store/log run details
     print(
         f"task: {task}, model: {model}, intervention_type: {intervention_type}, "
@@ -163,7 +170,7 @@ def finetune(
     else:
         temp_config = AutoConfig.from_pretrained(model)
         layers = [l for l in range(temp_config.num_hidden_layers)]
-        
+
     if lora_layers.strip() == "":
         lora_layers = []
     elif lora_layers != "all":
@@ -190,7 +197,7 @@ def finetune(
     if tokenizer.unk_token == None and tokenizer.pad_token == None:
         # raw llama3
         print("adding a special padding token...")
-        tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
         need_resize = True
     else:
         tokenizer.pad_token = tokenizer.unk_token
@@ -198,19 +205,40 @@ def finetune(
 
     # load dataset splits
     assert task in task_config, f"Unrecognized task: {task}"
-    train_datasets = task_config[task]["train_datasets"] if train_dataset is None else [train_dataset]
+    train_datasets = (
+        task_config[task]["train_datasets"]
+        if train_dataset is None
+        else [train_dataset]
+    )
     if task == "glue":
         eval_datasets = [train_dataset]
     else:
-        eval_datasets = task_config[task]["eval_datasets"] if eval_dataset is None else [eval_dataset]
-        
-    ReftDataset = LoReftGLUEDataset if task == "glue" else LoReftSupervisedDataset 
+        eval_datasets = (
+            task_config[task]["eval_datasets"]
+            if eval_dataset is None
+            else [eval_dataset]
+        )
+
+    ReftDataset = LoReftGLUEDataset if task == "glue" else LoReftSupervisedDataset
     train_dataset = ReftDataset(
-        task, train_datasets[0] if task == "glue" or task == "ultrafeedback_pair" \
-            else (os.path.join(data_dir, train_datasets[0]) if data_dir is not None else train_datasets[0]), 
-        tokenizer, data_split="train", seed=seed, max_n_example=max_n_train_example,
-        **{"num_interventions": len(layers), "position": position, 
-           "share_weights": share_weights, "test_split": test_split}
+        task,
+        train_datasets[0]
+        if task == "glue" or task == "ultrafeedback_pair"
+        else (
+            os.path.join(data_dir, train_datasets[0])
+            if data_dir is not None
+            else train_datasets[0]
+        ),
+        tokenizer,
+        data_split="train",
+        seed=seed,
+        max_n_example=max_n_train_example,
+        **{
+            "num_interventions": len(layers),
+            "position": position,
+            "share_weights": share_weights,
+            "test_split": test_split,
+        },
     )
     trigger_tokens = train_dataset.trigger_tokens
     num_labels = train_dataset.num_labels
@@ -221,10 +249,19 @@ def finetune(
         all_eval_datasets[eval_dataset] = {}
         for split in test_splits:
             raw_eval = ReftDataset(
-                task, eval_dataset if task == "glue" else os.path.join(data_dir, eval_dataset), 
-                tokenizer, data_split=split, seed=seed, max_n_example=max_n_eval_example,
-                **{"num_interventions": len(layers), "position": position, 
-                   "share_weights": share_weights}
+                task,
+                eval_dataset
+                if task == "glue"
+                else os.path.join(data_dir, eval_dataset),
+                tokenizer,
+                data_split=split,
+                seed=seed,
+                max_n_example=max_n_eval_example,
+                **{
+                    "num_interventions": len(layers),
+                    "position": position,
+                    "share_weights": share_weights,
+                },
             )
             all_eval_datasets[eval_dataset][split] = [raw_eval, raw_eval.raw_dataset]
     eval_datasets = all_eval_datasets
@@ -240,20 +277,30 @@ def finetune(
             in_train_n_eval_sample = len(to_split_eval_datasets) // 2
 
         new_splits = torch.utils.data.random_split(
-            to_split_eval_datasets, [len(to_split_eval_datasets)-in_train_n_eval_sample, in_train_n_eval_sample]
+            to_split_eval_datasets,
+            [
+                len(to_split_eval_datasets) - in_train_n_eval_sample,
+                in_train_n_eval_sample,
+            ],
         )
-        
+
         in_test_eval_datasets, in_train_eval_datasets = new_splits[0], new_splits[1]
         eval_datasets[train_dataset_str][test_split][0] = in_test_eval_datasets
         print("GLUE validation split (in training): ", len(in_train_eval_datasets))
-        print("GLUE validation split (testing): ", len(eval_datasets[train_dataset_str][test_split][0]))
+        print(
+            "GLUE validation split (testing): ",
+            len(eval_datasets[train_dataset_str][test_split][0]),
+        )
 
         is_regression = train_dataset_str == "stsb"
         metric = evaluate.load("glue", train_dataset_str)
+
         # You can define your custom compute_metrics function. It takes an `EvalPrediction` object (a namedtuple with a
         # predictions and label_ids field) and has to return a dictionary string to float.
         def in_training_compute_metrics(p: EvalPrediction):
-            preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
+            preds = (
+                p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
+            )
             preds = np.squeeze(preds) if is_regression else np.argmax(preds, axis=1)
             result = metric.compute(predictions=preds, references=p.label_ids)
             if len(result) > 1:
@@ -263,25 +310,26 @@ def finetune(
     # load model based on task type.
     if task in classification_tasks:
         config = AutoConfig.from_pretrained(
-            model, num_labels=num_labels,
+            model,
+            num_labels=num_labels,
             finetuning_task=train_dataset_str,
             load_in_8bit=True if dtype == "float8" else False,
-            device_map=device
+            device_map=device,
         )
         # full precision loading since usually for small models
         model = AutoModelForSequenceClassification.from_pretrained(
             model,
-            config=config, # just providing the label
+            config=config,  # just providing the label
             torch_dtype=dtype if dtype != "float8" else None,
             load_in_8bit=True if dtype == "float8" else False,
-            device_map=device
+            device_map=device,
         )
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model,
             torch_dtype=dtype if dtype != "float8" else None,  # save memory
             load_in_8bit=True if dtype == "float8" else False,
-            device_map=device
+            device_map=device,
         )
         config = model.config
     if need_resize:
@@ -290,32 +338,32 @@ def finetune(
         if not is_peft_available:
             raise ModuleNotFoundError("peft")
         from peft import LoraConfig, get_peft_model
-        
+
         print("WARNING: enabling lora for finetuning...")
         lora_modules = [m for m in lora_modules.split(";")]
         peft_config = LoraConfig(
-            r=lora_rank, lora_alpha=lora_alpha, target_modules=lora_modules,
-            layers_to_transform=lora_layers, 
+            r=lora_rank,
+            lora_alpha=lora_alpha,
+            target_modules=lora_modules,
+            layers_to_transform=lora_layers,
             # disable this to follow previous settings.
-            use_rslora=False, 
-            lora_dropout=dropout, bias="none", task_type="CAUSAL_LM"
+            use_rslora=False,
+            lora_dropout=dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
         )
         model = get_peft_model(model, peft_config)
 
     intervention_type = intervention_mapping[intervention_type]
-        
+
     # select collator based on the type
     if task in classification_tasks:
         data_collator_fn = DataCollatorWithPadding(
-            tokenizer=tokenizer,
-            padding="longest"
+            tokenizer=tokenizer, padding="longest"
         )
     else:
         data_collator_fn = DataCollatorForSeq2Seq(
-            tokenizer=tokenizer,
-            model=model,
-            label_pad_token_id=-100,
-            padding="longest"
+            tokenizer=tokenizer, model=model, label_pad_token_id=-100, padding="longest"
         )
     data_collator = ReftDataCollator(data_collator=data_collator_fn)
 
@@ -323,30 +371,49 @@ def finetune(
     intervention_dtype = torch.bfloat16 if isinstance(dtype, str) else dtype
     model_arch = model.config.architectures[0].lower()
     if model_arch in residual_stream_component_mapping:
-        representations = [{
-            "component": residual_stream_component_mapping[model_arch] % l,
-            "low_rank_dimension": rank,
-            "intervention": intervention_type(
-                embed_dim=config.hidden_size, low_rank_dimension=rank,
-                dropout=dropout, dtype=intervention_dtype, act_fn=act_fn, device=device,
-                add_bias=add_bias
-            )
-        } for l in layers]
-        task_type=TaskType.SEQ_CLS
+        representations = [
+            {
+                "component": residual_stream_component_mapping[model_arch] % l,
+                "low_rank_dimension": rank,
+                "intervention": intervention_type(
+                    embed_dim=config.hidden_size,
+                    low_rank_dimension=rank,
+                    dropout=dropout,
+                    dtype=intervention_dtype,
+                    act_fn=act_fn,
+                    device=device,
+                    add_bias=add_bias,
+                ),
+            }
+            for l in layers
+        ]
+        task_type = TaskType.SEQ_CLS
     else:
-        representations = [{
-            "layer": l, "component": f"base_model.model.model.layers[{l}].output" if use_lora else "block_output",
-            "low_rank_dimension": rank,
-            "intervention": intervention_type(
-                embed_dim=config.hidden_size, low_rank_dimension=rank,
-                dropout=dropout, dtype=intervention_dtype, act_fn=act_fn, device=device,
-                add_bias=add_bias
-            )
-        } for l in layers]
-        task_type=TaskType.CAUSAL_LM
-    
+        representations = [
+            {
+                "layer": l,
+                "component": f"base_model.model.model.layers[{l}].output"
+                if use_lora
+                else "block_output",
+                "low_rank_dimension": rank,
+                "intervention": intervention_type(
+                    embed_dim=config.hidden_size,
+                    low_rank_dimension=rank,
+                    dropout=dropout,
+                    dtype=intervention_dtype,
+                    act_fn=act_fn,
+                    device=device,
+                    add_bias=add_bias,
+                ),
+            }
+            for l in layers
+        ]
+        task_type = TaskType.CAUSAL_LM
+
     reft_config = ReftConfig(representations=representations)
-    reft_model = get_reft_model(model, reft_config, set_device=not isinstance(dtype, str))
+    reft_model = get_reft_model(
+        model, reft_config, set_device=not isinstance(dtype, str)
+    )
     if use_lora:
         # you need to call this to re-enable lora grads!
         reft_model.model.enable_adapter_layers()
@@ -368,14 +435,18 @@ def finetune(
     # start wandb logging
     if is_wandb:
         run = wandb.init(
-            project=f"{wandb_proj}_{task}", 
+            project=f"{wandb_proj}_{task}",
             entity=wandb_name,
             name=run_name,
             dir=wandb_dir,
         )
         run.summary.update(vars(args))
         wandb.log(
-            {"train/n_params": n_params, "train/n_params_with_model": n_params_with_model})
+            {
+                "train/n_params": n_params,
+                "train/n_params_with_model": n_params_with_model,
+            }
+        )
 
     # # training args
     training_args = TrainingArguments(
@@ -390,7 +461,7 @@ def finetune(
         metric_for_best_model=metric_for_best_model if task == "glue" else None,
         load_best_model_at_end=True if task == "glue" else False,
         logging_strategy="steps",
-        save_total_limit=1, # for GLUE, it will save 2 at max.
+        save_total_limit=1,  # for GLUE, it will save 2 at max.
         logging_steps=logging_steps,
         lr_scheduler_type=schedule,
         learning_rate=lr,
@@ -401,12 +472,15 @@ def finetune(
         use_cpu=False if device == "cuda" else True,
         seed=seed,
         # until HF supports ReFT, this remains False! :)
-        remove_unused_columns=False
+        remove_unused_columns=False,
     )
 
     # make trainer
-    trainer_class = ReftTrainerForSequenceClassification \
-        if task in classification_tasks else ReftTrainerForCausalLM
+    trainer_class = (
+        ReftTrainerForSequenceClassification
+        if task in classification_tasks
+        else ReftTrainerForCausalLM
+    )
     trainer = trainer_class(
         model=reft_model,
         tokenizer=tokenizer,
@@ -422,7 +496,7 @@ def finetune(
     args_dict = vars(args)
     args_dict["n_params"] = n_params
     json_file_name = f"{output_dir}/{run_name}/args.json"
-    with open(json_file_name, 'w') as json_file:
+    with open(json_file_name, "w") as json_file:
         json.dump(args_dict, json_file, indent=4)
 
     # save model
@@ -431,7 +505,7 @@ def finetune(
 
     # ensure everything is in eval mode
     reft_model.model.eval()
-    for k,v in reft_model.interventions.items():
+    for k, v in reft_model.interventions.items():
         _ = v[0].eval()
 
     print({"n_params": n_params})
@@ -440,12 +514,22 @@ def finetune(
     for dataset_name in eval_datasets:
         # split evalset into chunks
         for split, (eval_dataset, data_items) in eval_datasets[dataset_name].items():
-            
             generations, stats = compute_metrics(
-                task, dataset_name, reft_model, tokenizer, eval_dataset, data_items,
-                trigger_tokens, run_name, eval_batch_size, 
+                task,
+                dataset_name,
+                reft_model,
+                tokenizer,
+                eval_dataset,
+                data_items,
+                trigger_tokens,
+                run_name,
+                eval_batch_size,
                 data_collator if task in classification_tasks else None,
-                split, greedy_decoding, temperature, top_p, top_k
+                split,
+                greedy_decoding,
+                temperature,
+                top_p,
+                top_k,
             )
 
             # log
@@ -453,75 +537,121 @@ def finetune(
             if is_wandb:
                 wandb.log(stats)
             generations = stats if generations is None else generations
-            result_json_file_name = f"{output_dir}/{run_name}/{dataset_name}_{split}_outputs.json"
-            with open(result_json_file_name, 'w') as json_file:
+            result_json_file_name = (
+                f"{output_dir}/{run_name}/{dataset_name}_{split}_outputs.json"
+            )
+            with open(result_json_file_name, "w") as json_file:
                 json.dump(generations, json_file, indent=4)
 
     # log final eval stats
     result_json_file_name = f"{output_dir}/{run_name}/eval_results.json"
     eval_results["n_params"] = n_params
-    with open(result_json_file_name, 'w') as json_file:
+    with open(result_json_file_name, "w") as json_file:
         json.dump(eval_results, json_file, indent=4)
 
     print(f"Training results can be found in {output_dir}/{run_name}")
 
+
 def main():
-    parser = argparse.ArgumentParser(description="A simple script that takes different arguments.")
-    
-    parser.add_argument('-task', '--task', type=str, default=None)
-    parser.add_argument('-data_dir', '--data_dir', type=str, default="./datasets")
-    parser.add_argument('-train_dataset', '--train_dataset', type=str, default=None)
-    parser.add_argument('-eval_dataset', '--eval_dataset', type=str, default=None)
-    parser.add_argument('-model', '--model', type=str, help='yahma/llama-7b-hf', default='yahma/llama-7b-hf')
-    parser.add_argument('-seed', '--seed', type=int, help='42', default=42)
-    parser.add_argument('-l', '--layers', type=str, help='2;10;18;26', default='2;10;18;26')
-    parser.add_argument('-r', '--rank', type=int, help=8, default=8)
-    parser.add_argument('-p', '--position', type=str, help='f1+l1', default='f1+l1')
-    parser.add_argument('-e', '--epochs', type=int, help='1', default=1)
-    parser.add_argument('-is_wandb', '--is_wandb', action='store_true')
-    parser.add_argument('-wandb_name', '--wandb_name', type=str, default="reft")
-    parser.add_argument('-save_model', '--save_model', action='store_true')
-    parser.add_argument('-max_n_train_example', '--max_n_train_example', type=int, default=None)
-    parser.add_argument('-max_n_eval_example', '--max_n_eval_example', type=int, default=None)
+    parser = argparse.ArgumentParser(
+        description="A simple script that takes different arguments."
+    )
+
+    parser.add_argument("-task", "--task", type=str, default=None)
+    parser.add_argument("-data_dir", "--data_dir", type=str, default="./datasets")
+    parser.add_argument("-train_dataset", "--train_dataset", type=str, default=None)
+    parser.add_argument("-eval_dataset", "--eval_dataset", type=str, default=None)
     parser.add_argument(
-        '-type', '--intervention_type', type=str, 
-        help='LoreftIntervention', default="LoreftIntervention")
-    parser.add_argument('-gradient_accumulation_steps', '--gradient_accumulation_steps', type=int, default=4)
-    parser.add_argument('-batch_size', '--batch_size', type=int, default=4)
-    parser.add_argument('-eval_batch_size', '--eval_batch_size', type=int, default=4)
-    parser.add_argument('-output_dir', '--output_dir', type=str, default="./official_results")
-    parser.add_argument('-lr', '--lr', type=float, default=5e-3)
-    parser.add_argument('-schedule', '--schedule', type=str, default='linear')
-    parser.add_argument('-wu', '--warmup_ratio', type=float, default=0.00)
-    parser.add_argument('-wd', '--weight_decay', type=float, default=0.00)
-    parser.add_argument('-dropout', '--dropout', type=float, default=0.00)
-    parser.add_argument('-act_fn', '--act_fn', type=str, default=None)
-    parser.add_argument('-add_bias', '--add_bias', action='store_true')
-    parser.add_argument('-test_split', '--test_split', type=str, default="validation")
-    parser.add_argument('-train_on_inputs', '--train_on_inputs', action='store_true')
-    parser.add_argument('-max_length', '--max_length', type=int, help=512, default=512)
-    parser.add_argument('-nt', '--use_normalized_template', action='store_true')
-    parser.add_argument('-allow_cls_grad', '--allow_cls_grad', action='store_true')
-    parser.add_argument('-metric_for_best_model', '--metric_for_best_model', type=str, default="accuracy")
-    parser.add_argument('-dtype', '--dtype', type=str, default="bfloat16" if device == "cuda" else "float32")
-    parser.add_argument('-logging_steps', '--logging_steps', type=int, help=1, default=1)
-    parser.add_argument('-wandb_dir', '--wandb_dir', type=str, default='wandb')
-    parser.add_argument('-wandb_proj', '--wandb_proj', type=str, default='MyReFT')
-    parser.add_argument('-sw', '--share_weights', action='store_true')
-    parser.add_argument('-gd', '--greedy_decoding', action='store_true')
+        "-model",
+        "--model",
+        type=str,
+        help="yahma/llama-7b-hf",
+        default="yahma/llama-7b-hf",
+    )
+    parser.add_argument("-seed", "--seed", type=int, help="42", default=42)
+    parser.add_argument(
+        "-l", "--layers", type=str, help="2;10;18;26", default="2;10;18;26"
+    )
+    parser.add_argument("-r", "--rank", type=int, help=8, default=8)
+    parser.add_argument("-p", "--position", type=str, help="f1+l1", default="f1+l1")
+    parser.add_argument("-e", "--epochs", type=int, help="1", default=1)
+    parser.add_argument("-is_wandb", "--is_wandb", action="store_true")
+    parser.add_argument("-wandb_name", "--wandb_name", type=str, default="reft")
+    parser.add_argument("-save_model", "--save_model", action="store_true")
+    parser.add_argument(
+        "-max_n_train_example", "--max_n_train_example", type=int, default=None
+    )
+    parser.add_argument(
+        "-max_n_eval_example", "--max_n_eval_example", type=int, default=None
+    )
+    parser.add_argument(
+        "-type",
+        "--intervention_type",
+        type=str,
+        help="LoreftIntervention",
+        default="LoreftIntervention",
+    )
+    parser.add_argument(
+        "-gradient_accumulation_steps",
+        "--gradient_accumulation_steps",
+        type=int,
+        default=4,
+    )
+    parser.add_argument("-batch_size", "--batch_size", type=int, default=4)
+    parser.add_argument("-eval_batch_size", "--eval_batch_size", type=int, default=4)
+    parser.add_argument(
+        "-output_dir", "--output_dir", type=str, default="./official_results"
+    )
+    parser.add_argument("-lr", "--lr", type=float, default=5e-3)
+    parser.add_argument("-schedule", "--schedule", type=str, default="linear")
+    parser.add_argument("-wu", "--warmup_ratio", type=float, default=0.00)
+    parser.add_argument("-wd", "--weight_decay", type=float, default=0.00)
+    parser.add_argument("-dropout", "--dropout", type=float, default=0.00)
+    parser.add_argument("-act_fn", "--act_fn", type=str, default=None)
+    parser.add_argument("-add_bias", "--add_bias", action="store_true")
+    parser.add_argument("-test_split", "--test_split", type=str, default="validation")
+    parser.add_argument("-train_on_inputs", "--train_on_inputs", action="store_true")
+    parser.add_argument("-max_length", "--max_length", type=int, help=512, default=512)
+    parser.add_argument("-nt", "--use_normalized_template", action="store_true")
+    parser.add_argument("-allow_cls_grad", "--allow_cls_grad", action="store_true")
+    parser.add_argument(
+        "-metric_for_best_model",
+        "--metric_for_best_model",
+        type=str,
+        default="accuracy",
+    )
+    parser.add_argument(
+        "-dtype",
+        "--dtype",
+        type=str,
+        default="bfloat16" if device == "cuda" else "float32",
+    )
+    parser.add_argument(
+        "-logging_steps", "--logging_steps", type=int, help=1, default=1
+    )
+    parser.add_argument("-wandb_dir", "--wandb_dir", type=str, default="wandb")
+    parser.add_argument("-wandb_proj", "--wandb_proj", type=str, default="MyReFT")
+    parser.add_argument("-sw", "--share_weights", action="store_true")
+    parser.add_argument("-gd", "--greedy_decoding", action="store_true")
 
     # decoding params
-    parser.add_argument('-t', '--temperature', type=float, default=None)
-    parser.add_argument('-top_p', '--top_p', type=float, default=None)
-    parser.add_argument('-top_k', '--top_k', type=float, default=None)
+    parser.add_argument("-t", "--temperature", type=float, default=None)
+    parser.add_argument("-top_p", "--top_p", type=float, default=None)
+    parser.add_argument("-top_k", "--top_k", type=float, default=None)
 
     # lora add-ons
-    parser.add_argument('-disable_reft', '--disable_reft', action='store_true')
-    parser.add_argument('-use_lora', '--use_lora', action='store_true')
-    parser.add_argument('-lora_rank', '--lora_rank', type=int, default=8)
-    parser.add_argument('-lora_alpha', '--lora_alpha', type=int, default=32)
-    parser.add_argument('-lora_modules', '--lora_modules', type=str, default="o_proj")
-    parser.add_argument('-lora_layers', '--lora_layers', type=str, help='2;10;18;26', default='2;10;18;26')
+    parser.add_argument("-disable_reft", "--disable_reft", action="store_true")
+    parser.add_argument("-use_lora", "--use_lora", action="store_true")
+    parser.add_argument("-lora_rank", "--lora_rank", type=int, default=8)
+    parser.add_argument("-lora_alpha", "--lora_alpha", type=int, default=32)
+    parser.add_argument("-lora_modules", "--lora_modules", type=str, default="o_proj")
+    parser.add_argument(
+        "-lora_layers",
+        "--lora_layers",
+        type=str,
+        help="2;10;18;26",
+        default="2;10;18;26",
+    )
 
     args = parser.parse_args()
 

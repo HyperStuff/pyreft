@@ -1,9 +1,10 @@
 services:
-  pyreft:
+  "pyreft-linux":
     restart: always
-    container_name: ${PROJECT_NAME}-dev
-    image: ${PROJECT_NAME}:latest  # Local project image
+    container_name: ${CONTAINER_NAME}-linux
+    image: ${CONTAINER_NAME}-linux:latest  # Local project image
     env_file: .env
+    profiles: ["linux"]
     build:
       context: .
       dockerfile: ./Dockerfile
@@ -52,10 +53,48 @@ services:
       - autoheal=true
       - autoheal.stop.timeout=1
 
+  "pyreft-mac":    
+    restart: always
+    container_name: ${CONTAINER_NAME}-mac
+    image: ${CONTAINER_NAME}-mac:latest
+    env_file: .env
+    profiles: ["mac"]
+    build:
+      context: .
+      dockerfile: ./Dockerfile.mac
+      args:
+        - GIT_EMAIL=${GIT_EMAIL}
+        - GIT_NAME=${GIT_NAME}
+        - PROJECT_NAME=${PROJECT_NAME}
+    volumes:
+      - .:/workspace/${PROJECT_NAME}
+      - ./assets:/workspace/${PROJECT_NAME}/assets
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      - ./.vscode-server:/.vscode-server
+      - ${HOME}/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+    ports:
+      - "8765:8265"
+      - "10001:10001"
+      - "6379:6379"
+    
+    command: >
+      bash -c "
+      ray start --head
+      --include-dashboard=true
+      --dashboard-host=0.0.0.0
+      --dashboard-port=8265
+      --port=6379
+      --ray-client-server-port=10001
+      --node-ip-address=0.0.0.0
+      --block &&
+      tail -f /dev/null"
+    
+
   autoheal:
     image: willfarrell/autoheal
+    profiles: ["linux", "mac"]
     environment:
-      - AUTOHEAL_CONTAINER_LABEL=all
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: always

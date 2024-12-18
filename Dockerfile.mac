@@ -2,7 +2,7 @@ ARG GIT_NAME
 ARG GIT_EMAIL
 ARG PROJECT_NAME
 
-FROM ghcr.io/${GIT_NAME}/ml-base:linux-latest
+FROM ghcr.io/${GIT_NAME}/ml-base:mac-latest
 
 WORKDIR /workspace/${PROJECT_NAME}
 
