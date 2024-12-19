@@ -31,12 +31,12 @@ from pyreft import (
     LoreftIntervention,
     NodireftIntervention,  # remove ortho + direct edit reft <- this is like LoRA on time-step  # remove ortho + direct edit reft <- this is like LoRA on time-step
     NoreftIntervention,  # remove ortho.  # remove ortho.
-    TokenSelectiveLoreftIntervention,
     ReftConfig,
     ReftDataCollator,
     ReftTrainerForCausalLM,
     ReftTrainerForSequenceClassification,
     TaskType,
+    TokenSelectiveLoreftIntervention,
     get_reft_model,
 )
 
@@ -155,9 +155,9 @@ def finetune(cfg: DictConfig):
     assert cfg.task.name in task_config, f"Unrecognized task: {cfg.task.name}"
     train_datasets = cfg.task.train_dataset
     if cfg.task.name == "glue":
-        eval_datasets = cfg.task.train_dataset
+        eval_datasets_names = cfg.task.train_dataset
     else:
-        eval_datasets = cfg.task.eval_dataset
+        eval_datasets_names = cfg.task.eval_dataset
 
     ReftDataset = (
         LoReftGLUEDataset if cfg.task.name == "glue" else LoReftSupervisedDataset
@@ -183,6 +183,29 @@ def finetune(cfg: DictConfig):
             "test_split": cfg.task.test_split,
         },
     )
+
+    all_eval_datasets = {}
+    for eval_dataset in eval_datasets_names:
+        test_splits = cfg.task.test_split.split(";")
+        all_eval_datasets[eval_dataset] = {}
+        for split in test_splits:
+            raw_eval = ReftDataset(
+                cfg.task.name,
+                eval_dataset
+                if cfg.task.name== "glue"
+                else os.path.join(cfg.task.data_dir, eval_dataset),
+                tokenizer,
+                data_split=split,
+                seed=cfg.training.seed,
+                max_n_example=cfg.task.max_n_eval_example,
+                **{
+                    "num_interventions": len(layers),
+                    "position": cfg.intervention.position,
+                    "share_weights": cfg.intervention.share_weights,
+                },
+            )
+            all_eval_datasets[eval_dataset][split] = [raw_eval, raw_eval.raw_dataset]
+    eval_datasets = all_eval_datasets
 
     # Handle GLUE specific dataset splitting
     if cfg.task.name == "glue":
@@ -360,7 +383,8 @@ def finetune(cfg: DictConfig):
         per_device_train_batch_size=cfg.training.batch_size,
         per_device_eval_batch_size=cfg.training.eval_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
-        evaluation_strategy="epoch" if cfg.task.name == "glue" else "no",
+        evaluation_strategy=cfg.training.eval_strategy if cfg.task.name == "glue" else "no",
+        eval_steps=cfg.training.eval_steps,
         save_strategy="epoch" if cfg.task.name == "glue" else "no",
         metric_for_best_model=cfg.task.metric_for_best_model
         if cfg.task.name == "glue"
@@ -400,7 +424,7 @@ def finetune(cfg: DictConfig):
     trainer.train()
 
     # dump config
-    config_dict = OmegaConf.to_container(cfg, resolve=True)
+    config_dict = OmegaConf.to_container(cfg, resolve=False)
     config_dict["n_params"] = n_params
     json_file_name = f"{cfg.logging.output_dir}/{run_name}/config.json"
     with open(json_file_name, "w") as json_file:

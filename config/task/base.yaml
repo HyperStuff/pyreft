@@ -1,8 +1,8 @@
 name: null
-data_dir: "./datasets"
+data_dir: "dataset"
 train_dataset: null
 eval_dataset: null
-test_split: "validation"
+test_split: "test"
 train_on_inputs: false
 use_normalized_template: false
 allow_cls_grad: false

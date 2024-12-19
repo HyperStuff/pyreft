@@ -2,6 +2,7 @@ examples/style/*
 experiments/run_glue_base_cls.sh
 *result*/
 datasets/ultrafeedback
+dataset/
 wandb/
 *.out
 zen.py
@@ -10,7 +11,6 @@ test.py
 .DS_Store
 examples/loreft/dataset
 memo_*.png
-*.json
 examples/safety/jail*
 examples/safety/*.csv
 examples/composition/compreft.py
