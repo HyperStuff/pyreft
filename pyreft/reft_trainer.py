@@ -1,18 +1,14 @@
 import os
-import re
 from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
+from typing import Dict, Sequence
 
-import numpy as np
 import pyvene as pv
 import torch
-import torch.nn as nn
 from datasets import Dataset
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
-    AutoTokenizer,
     DataCollator,
     DataCollatorForSeq2Seq,
     Trainer,
@@ -96,6 +92,42 @@ class ReftTrainer(Trainer):
             else:
                 # this is dummy for lora only baseline
                 unit_locations = {"sources->base": (None, 0)}
+        base_outputs, cf_outputs = intervenable(
+            {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+            },
+            unit_locations=unit_locations,
+            labels=inputs["labels"],
+            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist()
+            if "subspaces" in inputs
+            else None,
+        )
+        # return
+        output = cf_outputs
+        if cf_outputs is None:
+            output = base_outputs  # in case of lora only training
+
+        return (output, output) if return_outputs else output.loss
+
+
+class TokenSelectiveReftTrainer(ReftTrainer):
+    def compute_loss(
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+    ):
+        # run intervened forward pass
+        unit_locations = None
+        if "intervention_locations" in inputs:
+            if inputs["intervention_locations"].dim() == 3:
+                unit_locations = {
+                    "sources->base": (
+                        None,
+                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
+                    )
+                }
+            else:
+                # this is dummy for lora only baseline
+                unit_locations = {"sources->base": (None, 0)}
         _intervened_out = intervenable(
             {
                 "input_ids": inputs["input_ids"],
@@ -137,6 +169,13 @@ class ReftTrainer(Trainer):
 
 
 class ReftTrainerForCausalLM(ReftTrainer):
+    def get_train_dataloader(self) -> DataLoader:
+        return make_dataloader(
+            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True
+        )
+
+
+class TokenSelectiveReftTrainerForCausalLM(TokenSelectiveReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
         return make_dataloader(
             self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True
