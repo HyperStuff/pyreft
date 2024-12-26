@@ -83,11 +83,26 @@ class LoreftIntervention(
         self.rotate_layer.parametrizations.weight[0].base[:, :overload_w_width] = (
             overload_w
         )
-        assert (
-            torch.allclose(self.rotate_layer.weight.data, overload_w.data) == True
+        assert torch.allclose(
+            self.rotate_layer.weight.data, overload_w.data
         )  # we must match!
 
         return
+
+
+class TokenSelectiveLoreftIntervention(LoreftIntervention):
+    def forward(self, base, source=None, subspaces=None):
+        rotated_base = self.rotate_layer(base)
+        output = base + torch.matmul(
+            (self.act_fn(self.learned_source(base)) - rotated_base),
+            self.rotate_layer.weight.T,
+        )
+
+        breakpoint()
+
+        if subspaces and subspaces[0].get("token_weights", None) is not None:
+            output = output * subspaces[0]["token_weights"]
+        return self.dropout(output.to(base.dtype))
 
 
 class NoreftIntervention(
@@ -237,75 +252,3 @@ class NodireftIntervention(
             self.act_fn(self.learned_source(base)), self.proj_layer.weight
         )
         return self.dropout(output.to(base.dtype))
-
-
-class TokenSelectionAttention(torch.nn.Module):
-    def __init__(
-        self,
-        embed_dim: int,
-        num_heads: int,
-        start_temperature: float,
-        end_temperature: int,
-        total_steps: int,
-        dropout: float = 0.0,
-        dtype: torch.dtype = torch.float32,
-    ) -> None:
-        super().__init__()
-
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.start_temperature = start_temperature
-        self.end_temperature = end_temperature
-        self.total_steps = total_steps
-
-        self.temperature = torch.nn.Parameter(
-            torch.ones(1, 1, 1, dtype=dtype) * self.start_temperature,
-            requires_grad=False,
-        )
-
-        self.attn = torch.nn.MultiheadAttention(
-            self.embed_dim, self.num_heads, dropout=dropout, dtype=dtype
-        )
-        self.down_proj = torch.nn.Linear(self.embed_dim, 1, dtype=dtype)
-        self._current_step = 0
-
-        self.register_backward_hook(self._update_temperature)
-
-    def _update_temperature(self, *args):
-        self._current_step = min(self._current_step + 1, self.total_steps)
-        current_temp = self.start_temperature + (
-            self.end_temperature - self.start_temperature
-        ) * (self._current_step / self.total_steps)
-        self.temperature.data.fill_(current_temp)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out, _ = self.attn(x, x, x)
-        selection_mask = torch.nn.functional.sigmoid(
-            self.down_proj(out) / self.temperature
-        )
-        return selection_mask
-
-
-class TokenSelectiveLoreftIntervention(LoreftIntervention):
-    """
-    TokenSelectiveLoreft(h) = M(h)*(h + R^T(Wh + b - Rh)))
-    where M(h) are weights for each token.
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-        self.selection = TokenSelectionAttention(
-            embed_dim=self.embed_dim,
-            num_heads=kwargs["num_heads"],
-            start_temperature=kwargs["start_temperature"],
-            end_temperature=kwargs["end_temperature"],
-            total_steps=kwargs["total_steps"],
-            dropout=kwargs["dropout"],
-            dtype=kwargs["dtype"],
-        )
-
-    def forward(self, base, source=None, subspaces=None):
-        intervened_output = super().forward(base, source, subspaces)
-        selection_mask = self.selection(base)
-        return intervened_output * selection_mask

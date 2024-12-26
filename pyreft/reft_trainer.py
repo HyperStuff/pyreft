@@ -1,32 +1,28 @@
-import pyvene as pv
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from transformers import (
-    Trainer,
-    TrainingArguments,
-    DataCollator,
-    DataCollatorForSeq2Seq,
-    AutoTokenizer
-)
-from transformers.trainer_utils import (
-    EvalPrediction,
-    has_length,
-    denumpify_detensorize
-)
-from datasets import Dataset
+import os
+import re
 from dataclasses import dataclass
 from typing import Dict, Optional, Sequence
 
-from tqdm import tqdm
-import os
-import torch
-import re
-
 import numpy as np
+import pyvene as pv
+import torch
+import torch.nn as nn
+from datasets import Dataset
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import (
+    AutoTokenizer,
+    DataCollator,
+    DataCollatorForSeq2Seq,
+    Trainer,
+    TrainingArguments,
+)
+from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, has_length
 from transformers.utils import logging
 
 logger = logging.get_logger(__name__)
+
 
 @dataclass
 class ReftDataCollator(object):
@@ -37,7 +33,9 @@ class ReftDataCollator(object):
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         batch_inputs = self.data_collator(instances)
         max_seq_length = batch_inputs["input_ids"].shape[-1]
-        batch_inputs["intervention_locations"] = batch_inputs["intervention_locations"][..., :max_seq_length]
+        batch_inputs["intervention_locations"] = batch_inputs["intervention_locations"][
+            ..., :max_seq_length
+        ]
         return batch_inputs
 
 
@@ -52,8 +50,18 @@ def make_data_collator(tokenizer, model) -> ReftDataCollator:
     return ReftDataCollator(data_collator=data_collator_fn)
 
 
-def make_dataloader(dataset: Dataset, batch_size: int, collate_fn: DataCollatorForSeq2Seq, shuffle: bool) -> DataLoader:
-    return DataLoader(dataset, shuffle=shuffle, batch_size=batch_size, collate_fn=collate_fn)
+def make_dataloader(
+    dataset: Dataset, batch_size: int, collate_fn: DataCollatorForSeq2Seq, shuffle: bool
+) -> DataLoader:
+    return DataLoader(
+        dataset, shuffle=shuffle, batch_size=batch_size, collate_fn=collate_fn
+    )
+
+
+@dataclass
+class ReftTrainingArguments(TrainingArguments):
+    token_sparsity_loss_weight: float = 0.0
+    token_binary_loss_weight: float = 0.0
 
 
 class ReftTrainer(Trainer):
@@ -61,78 +69,104 @@ class ReftTrainer(Trainer):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         self.model.save_intervention(
-            save_directory=f"{output_dir}/intervenable_model", 
-            include_model=True
+            save_directory=f"{output_dir}/intervenable_model", include_model=True
         )
 
     def _load_best_model(self):
-        logger.warning(f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric}).")
+        logger.warning(
+            f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric})."
+        )
         self.model.load_intervention(
-            f"{self.state.best_model_checkpoint}/intervenable_model", 
-            include_model=True
+            f"{self.state.best_model_checkpoint}/intervenable_model", include_model=True
         )
 
     def compute_loss(
-        self,
-        intervenable: pv.IntervenableModel,
-        inputs,
-        return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
     ):
         # run intervened forward pass
         unit_locations = None
         if "intervention_locations" in inputs:
             if inputs["intervention_locations"].dim() == 3:
-                unit_locations={"sources->base": (
-                    None,
-                    inputs["intervention_locations"].permute(1, 0, 2).tolist()
-                )}
+                unit_locations = {
+                    "sources->base": (
+                        None,
+                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
+                    )
+                }
             else:
                 # this is dummy for lora only baseline
-                unit_locations={"sources->base": (None, 0)}
-        base_outputs, cf_outputs = intervenable(
+                unit_locations = {"sources->base": (None, 0)}
+        _intervened_out = intervenable(
             {
                 "input_ids": inputs["input_ids"],
-                "attention_mask": inputs["attention_mask"]
+                "attention_mask": inputs["attention_mask"],
             },
             unit_locations=unit_locations,
             labels=inputs["labels"],
-            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist() if "subspaces" in inputs else None
+            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist()
+            if "subspaces" in inputs
+            else None,
         )
+
+        if len(_intervened_out) == 2:
+            base_outputs, cf_outputs = _intervened_out
+            token_weights = None
+        else:
+            base_outputs, cf_outputs, token_weights = _intervened_out
+
+        if token_weights is not None:
+            # Compute sparsity loss if enabled
+            sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
+                torch.sum(token_weights, dim=-1)
+            )
+            # Compute binary loss if enabled
+            binary_loss = (
+                self.args.token_binary_loss_weight
+                * (token_weights * (1 - token_weights)).mean()
+            )
+
         # return
         output = cf_outputs
         if cf_outputs is None:
-            output = base_outputs # in case of lora only training
+            output = base_outputs  # in case of lora only training
+
+        if token_weights is not None:
+            output.loss += sparsity_loss + binary_loss
 
         return (output, output) if return_outputs else output.loss
 
+
 class ReftTrainerForCausalLM(ReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
-        return make_dataloader(self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True)
+        return make_dataloader(
+            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True
+        )
 
-    
+
 class ReftTrainerForSequenceClassification(ReftTrainer):
     def compute_loss(
-        self,
-        intervenable: pv.IntervenableModel,
-        inputs,
-        return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
     ):
         # run intervened forward pass
         unit_locations = None
         if "intervention_locations" in inputs:
-            unit_locations={"sources->base": (
-                None,
-                inputs["intervention_locations"].permute(1, 0, 2).tolist()
-            )}
-            
+            unit_locations = {
+                "sources->base": (
+                    None,
+                    inputs["intervention_locations"].permute(1, 0, 2).tolist(),
+                )
+            }
+
         _, cf_outputs = intervenable(
             {
                 "input_ids": inputs["input_ids"],
-                "attention_mask": inputs["attention_mask"]
+                "attention_mask": inputs["attention_mask"],
             },
             unit_locations=unit_locations,
             labels=inputs["labels"],
-            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist() if "subspaces" in inputs else None
+            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist()
+            if "subspaces" in inputs
+            else None,
         )
         # classification loss on counterfactual labels
         logits = cf_outputs.logits
@@ -141,13 +175,15 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         if self.model.model.config.problem_type is None:
             if self.model.model.num_labels == 1:
                 problem_type = "regression"
-            elif self.model.model.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
+            elif self.model.model.num_labels > 1 and (
+                labels.dtype == torch.long or labels.dtype == torch.int
+            ):
                 problem_type = "single_label_classification"
             else:
                 problem_type = "multi_label_classification"
         else:
             problem_type = self.model.model.config.problem_type
-            
+
         if problem_type == "regression":
             loss_fct = MSELoss()
             if self.model.model.num_labels == 1:
@@ -156,30 +192,33 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
                 loss = loss_fct(logits, labels.to(torch.bfloat16))
         elif problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
-            loss = loss_fct(logits.view(-1, self.model.model.num_labels), labels.view(-1))
+            loss = loss_fct(
+                logits.view(-1, self.model.model.num_labels), labels.view(-1)
+            )
         elif problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
             loss = loss_fct(logits, labels)
 
         # return
         return (loss, cf_outputs) if return_outputs else loss
-    
-    def evaluate(
-        self, ignore_keys,
-    ):
 
+    def evaluate(
+        self,
+        ignore_keys,
+    ):
         # ensure everything is in eval mode
         self.model.model.eval()
-        for k,v in  self.model.interventions.items():
+        for k, v in self.model.interventions.items():
             _ = v[0].eval()
-        
+
         batch_size = self.args.eval_batch_size
         data_collator = self.data_collator
         eval_dataset = self.eval_dataset
         intervenable = self.model
-        
+
         dataloader = make_dataloader(
-            eval_dataset, batch_size, data_collator, shuffle=False)
+            eval_dataset, batch_size, data_collator, shuffle=False
+        )
 
         logger.info(f"***** Running In-Training Evaluation *****")
         if has_length(dataloader):
@@ -196,28 +235,37 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
                 for k, v in inputs.items():
                     if v is not None and isinstance(v, torch.Tensor):
                         inputs[k] = v.to(self.model.get_device())
-                
+
                 # [layers, batch_size, positions]
-                intervention_locations = inputs["intervention_locations"].permute(1, 0, 2).tolist()
+                intervention_locations = (
+                    inputs["intervention_locations"].permute(1, 0, 2).tolist()
+                )
                 _, cf_outputs = intervenable(
-                    {"input_ids": inputs["input_ids"], "attention_mask": inputs["attention_mask"]},
-                    unit_locations={"sources->base": (None, intervention_locations)})
-            
+                    {
+                        "input_ids": inputs["input_ids"],
+                        "attention_mask": inputs["attention_mask"],
+                    },
+                    unit_locations={"sources->base": (None, intervention_locations)},
+                )
+
                 all_preds += [cf_outputs.logits]
                 all_labels += [inputs["labels"]]
         all_preds = torch.cat(all_preds, dim=0).cpu().to(torch.float32)
         all_labels = torch.cat(all_labels, dim=0).cpu().to(torch.float32)
-        metrics = self.compute_metrics(EvalPrediction(predictions=all_preds, label_ids=all_labels))
+        metrics = self.compute_metrics(
+            EvalPrediction(predictions=all_preds, label_ids=all_labels)
+        )
         metrics = denumpify_detensorize(metrics)
-        
+
         metric_key_prefix = "eval"
         for key in list(metrics.keys()):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
-        
+
         self.log(metrics)
-        self.control = self.callback_handler.on_evaluate(self.args, self.state, self.control, metrics)
+        self.control = self.callback_handler.on_evaluate(
+            self.args, self.state, self.control, metrics
+        )
         self._memory_tracker.stop_and_update_metrics(metrics)
-        
+
         return metrics
-        

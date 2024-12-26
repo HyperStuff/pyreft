@@ -8,7 +8,6 @@ import hydra
 import numpy as np
 import torch
 import wandb
-from dataset import LoReftGLUEDataset, LoReftSupervisedDataset
 from omegaconf import DictConfig, OmegaConf
 from task_config import task_config
 from transformers import (
@@ -23,6 +22,7 @@ from transformers import (
 )
 from transformers.trainer_utils import EvalPrediction
 
+from dataset import LoReftGLUEDataset, LoReftSupervisedDataset
 from examples.loreft_attentive.compute_metrics import compute_metrics
 from pyreft import (
     ConsreftIntervention,  # constant bias only  # constant bias only
@@ -39,6 +39,8 @@ from pyreft import (
     TokenSelectiveLoreftIntervention,
     get_reft_model,
 )
+from pyreft.reft_model import AutomatedReftModel
+from pyreft.reft_trainer import ReftTrainingArguments
 
 try:
     # This library is our indicator that the required installs
@@ -49,7 +51,13 @@ try:
 except ModuleNotFoundError:
     is_peft_available = False
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+if torch.backends.mps.is_available():
+    device = "mps"
+elif torch.cuda.is_available():
+    device = "cuda"
+else:
+    device = "cpu"
+
 classification_tasks = {"glue"}
 residual_stream_component_mapping = {
     "robertaformaskedlm": "roberta.encoder.layer[%s].output"
@@ -73,7 +81,7 @@ intervention_mapping = {
 
 @hydra.main(
     version_base=None,
-    config_path="/workspace/pyreft/config",
+    config_path="../../config",
     config_name="loreft_attentive",
 )
 def finetune(cfg: DictConfig):
@@ -192,7 +200,7 @@ def finetune(cfg: DictConfig):
             raw_eval = ReftDataset(
                 cfg.task.name,
                 eval_dataset
-                if cfg.task.name== "glue"
+                if cfg.task.name == "glue"
                 else os.path.join(cfg.task.data_dir, eval_dataset),
                 tokenizer,
                 data_split=split,
@@ -296,11 +304,6 @@ def finetune(cfg: DictConfig):
         act_fn=cfg.intervention.act_fn,
         device=device,
         add_bias=cfg.intervention.add_bias,
-        total_steps=cfg.training.epochs
-        * len(train_dataset)
-        // (cfg.training.batch_size * cfg.training.gradient_accumulation_steps),
-        start_temperature=cfg.intervention.start_temperature,
-        end_temperature=cfg.intervention.end_temperature,
     )
 
     if model_arch in residual_stream_component_mapping:
@@ -328,7 +331,23 @@ def finetune(cfg: DictConfig):
         task_type = TaskType.CAUSAL_LM
 
     reft_config = ReftConfig(representations=representations)
-    reft_model = get_reft_model(model.to(device), reft_config, set_device=True)
+    reft_model = get_reft_model(
+        model.to(device),
+        reft_config,
+        set_device=True,
+        instance_cls=AutomatedReftModel,
+        do_token_selective_intervention=cfg.model.do_token_selection,
+        embed_dim=cfg.model.embed_dim,
+        num_selection_attn_heads=cfg.model.num_selection_attn_heads,
+        start_temperature=cfg.model.start_temperature,
+        end_temperature=cfg.model.end_temperature,
+        max_steps=(
+            cfg.training.epochs
+            * len(train_dataset)
+            // (cfg.training.batch_size * cfg.training.gradient_accumulation_steps)
+        ),
+        dtype=dtype,
+    )
 
     if cfg.lora.use_lora:
         reft_model.model.enable_adapter_layers()
@@ -376,14 +395,16 @@ def finetune(cfg: DictConfig):
     data_collator = ReftDataCollator(data_collator=data_collator_fn)
 
     # training args
-    training_args = TrainingArguments(
+    training_args = ReftTrainingArguments(
         output_dir=f"{cfg.logging.output_dir}/{run_name}",
         run_name=run_name,
         num_train_epochs=cfg.training.epochs,
         per_device_train_batch_size=cfg.training.batch_size,
         per_device_eval_batch_size=cfg.training.eval_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
-        evaluation_strategy=cfg.training.eval_strategy if cfg.task.name == "glue" else "no",
+        evaluation_strategy=cfg.training.eval_strategy
+        if cfg.task.name == "glue"
+        else "no",
         eval_steps=cfg.training.eval_steps,
         save_strategy="epoch" if cfg.task.name == "glue" else "no",
         metric_for_best_model=cfg.task.metric_for_best_model
@@ -396,10 +417,12 @@ def finetune(cfg: DictConfig):
         lr_scheduler_type=cfg.training.schedule,
         learning_rate=cfg.training.learning_rate,
         warmup_ratio=cfg.training.warmup_ratio,
+        token_sparsity_loss_weight=cfg.training.token_sparsity_loss_weight,
+        token_binary_loss_weight=cfg.training.binary_loss_weight,
         optim="adamw_torch",
         weight_decay=cfg.training.weight_decay,
         report_to="wandb" if cfg.logging.is_wandb else "none",
-        use_cpu=False if device == "cuda" else True,
+        use_cpu=False if device in ["cuda", "mps"] else True,
         seed=cfg.training.seed,
         remove_unused_columns=False,
     )
@@ -424,6 +447,7 @@ def finetune(cfg: DictConfig):
     trainer.train()
 
     # dump config
+    config_dict = OmegaConf.to_container(cfg, resolve=False)
     config_dict = OmegaConf.to_container(cfg, resolve=False)
     config_dict["n_params"] = n_params
     json_file_name = f"{cfg.logging.output_dir}/{run_name}/config.json"

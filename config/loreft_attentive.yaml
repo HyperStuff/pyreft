@@ -13,6 +13,11 @@ model:
   name: "yahma/llama-7b-hf"
   dtype: "bfloat16"
   max_length: 512
+  embed_dim: 4096
+  num_selection_attn_heads: 1
+  start_temperature: 1.0
+  end_temperature: 1e-5
+  do_token_selection: true
 
 # Training settings
 training:
@@ -29,6 +34,8 @@ training:
   logging_steps: 1
   eval_strategy: steps
   eval_steps: 100
+  token_sparsity_loss_weight: 1.0
+  binary_loss_weight: 0.0
 
 # Intervention settings
 intervention:
