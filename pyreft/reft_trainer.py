@@ -163,13 +163,13 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                     "train/sparsity_loss": sparsity_loss.item(),
                     "train/binary_loss": binary_loss.item(),
                     "train/mean_token_weight": token_weights.mean().item(),
-                    "train/token_weight_std": token_weights.std().item(),
                     "train/token_weight_sparsity": (token_weights < 0.5)
                     .float()
                     .mean()
                     .item(),
                     "train/token_weight_max": token_weights.max().item(),
                     "train/token_weight_min": token_weights.min().item(),
+                    "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
                 }
             )
 
@@ -207,7 +207,6 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                 output.metrics.update(
                     {
                         f"{metric_key_prefix}/mean_token_weight": token_weights.mean().item(),
-                        f"{metric_key_prefix}/token_weight_std": token_weights.std().item(),
                         f"{metric_key_prefix}/token_weight_sparsity": (
                             token_weights < 0.5
                         )
@@ -216,6 +215,7 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                         .item(),
                         f"{metric_key_prefix}/token_weight_max": token_weights.max().item(),
                         f"{metric_key_prefix}/token_weight_min": token_weights.min().item(),
+                        f"{metric_key_prefix}/token_weight_temperature": self.model.selection_module.temperature.item(),
                     }
                 )
 
