@@ -42,7 +42,7 @@ intervention:
   type: "TokenSelectiveLoreftIntervention"
   layers: "2;10;18;26"
   rank: 8
-  position: "f256+l256"
+  position: "f512"
   act_fn: null
   add_bias: false
   share_weights: false

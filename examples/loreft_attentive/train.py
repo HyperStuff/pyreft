@@ -40,7 +40,7 @@ from pyreft import (
     get_reft_model,
 )
 from pyreft.reft_model import AutomatedReftModel
-from pyreft.reft_trainer import ReftTrainingArguments
+from pyreft.reft_trainer import ReftTrainingArguments, TokenSelectiveReftTrainer
 
 try:
     # This library is our indicator that the required installs
@@ -428,12 +428,7 @@ def finetune(cfg: DictConfig):
     )
 
     # make trainer
-    trainer_class = (
-        ReftTrainerForSequenceClassification
-        if cfg.task.name in classification_tasks
-        else ReftTrainerForCausalLM
-    )
-    trainer = trainer_class(
+    trainer = TokenSelectiveReftTrainer(
         model=reft_model,
         tokenizer=tokenizer,
         args=training_args,

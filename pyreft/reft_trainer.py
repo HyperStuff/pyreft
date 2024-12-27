@@ -157,6 +157,22 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                 * (token_weights * (1 - token_weights)).mean()
             )
 
+            # Log metrics about token weights
+            self.log(
+                {
+                    "train/sparsity_loss": sparsity_loss.item(),
+                    "train/binary_loss": binary_loss.item(),
+                    "train/mean_token_weight": token_weights.mean().item(),
+                    "train/token_weight_std": token_weights.std().item(),
+                    "train/token_weight_sparsity": (token_weights < 0.5)
+                    .float()
+                    .mean()
+                    .item(),
+                    "train/token_weight_max": token_weights.max().item(),
+                    "train/token_weight_min": token_weights.min().item(),
+                }
+            )
+
         # return
         output = cf_outputs
         if cf_outputs is None:
@@ -166,6 +182,44 @@ class TokenSelectiveReftTrainer(ReftTrainer):
             output.loss += sparsity_loss + binary_loss
 
         return (output, output) if return_outputs else output.loss
+
+    def evaluation_loop(
+        self,
+        dataloader,
+        description,
+        prediction_loss_only=None,
+        ignore_keys=None,
+        metric_key_prefix="eval",
+    ):
+        # Get the original eval loop results
+        output = super().evaluation_loop(
+            dataloader,
+            description,
+            prediction_loss_only,
+            ignore_keys,
+            metric_key_prefix,
+        )
+
+        # Add token weight metrics for evaluation if available
+        if hasattr(self.model, "get_token_weights"):
+            token_weights = self.model.get_token_weights()
+            if token_weights is not None:
+                output.metrics.update(
+                    {
+                        f"{metric_key_prefix}/mean_token_weight": token_weights.mean().item(),
+                        f"{metric_key_prefix}/token_weight_std": token_weights.std().item(),
+                        f"{metric_key_prefix}/token_weight_sparsity": (
+                            token_weights < 0.5
+                        )
+                        .float()
+                        .mean()
+                        .item(),
+                        f"{metric_key_prefix}/token_weight_max": token_weights.max().item(),
+                        f"{metric_key_prefix}/token_weight_min": token_weights.min().item(),
+                    }
+                )
+
+        return output
 
 
 class ReftTrainerForCausalLM(ReftTrainer):

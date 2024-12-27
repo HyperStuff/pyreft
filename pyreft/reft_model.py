@@ -218,8 +218,6 @@ class AutomatedReftModel(ReftModel):
         else:
             token_weights = None
 
-        breakpoint()
-
         # broadcast
         unit_locations = self._broadcast_unit_locations(
             get_batch_size(base), unit_locations
