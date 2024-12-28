@@ -8,6 +8,7 @@ gcsfs>=2024.2.0
 huggingface-hub
 hydra-core
 hydra-joblib-launcher
+hydra-ray-jobs-launcher
 hydra-submitit-launcher
 hydra_colorlog
 ipykernel
@@ -37,5 +38,3 @@ transformers==4.45.1
 wandb
 ydata-profiling>=4.7.0
 
-# Added by mltoolbox
-hydra-ray-jobs-launcher

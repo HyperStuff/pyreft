@@ -1,26 +1,19 @@
-import pyvene as pv
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from transformers import (
-    Trainer,
-    TrainingArguments,
-    DataCollator,
-    DataCollatorForSeq2Seq,
-    AutoTokenizer,
-)
-from datasets import Dataset
-from dataclasses import dataclass
-from typing import Dict, Optional, Sequence
-from task_config import task_config
-from tqdm import tqdm
-import os
-import torch
 import re
+
 import evaluate
 import numpy as np
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+import pyvene as pv
+import torch
+from datasets import Dataset
+from task_config import task_config
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import (
+    AutoTokenizer,
+    DataCollatorForSeq2Seq,
+)
 from transformers.utils import logging
-from transformers.trainer_utils import EvalPrediction, has_length, denumpify_detensorize
+
 from pyreft import ReftDataCollator
 
 device = "cuda" if torch.cuda.is_available() else "cpu"

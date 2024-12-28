@@ -1,6 +1,6 @@
 import os
-from dataclasses import dataclass
-from typing import Dict, Sequence
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Sequence
 
 import pyvene as pv
 import torch
@@ -14,8 +14,14 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-from transformers.trainer_utils import EvalPrediction, denumpify_detensorize, has_length
+from transformers.trainer_utils import (
+    EvalPrediction,
+    denumpify_detensorize,
+    has_length,
+)
 from transformers.utils import logging
+
+from pyreft.utils import compute_metrics_hf_train_loop
 
 logger = logging.get_logger(__name__)
 
@@ -58,6 +64,15 @@ def make_dataloader(
 class ReftTrainingArguments(TrainingArguments):
     token_sparsity_loss_weight: float = 0.0
     token_binary_loss_weight: float = 0.0
+    # New arguments for evaluation
+    task: str = "glue"
+    dataset_name: str = "mnli"
+    trigger_tokens: str = ""
+    greedy_decoding: bool = False
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[float] = None
+    task_config: Optional[Dict] = field(default_factory=dict)
 
 
 class ReftTrainer(Trainer):
@@ -191,16 +206,29 @@ class TokenSelectiveReftTrainer(ReftTrainer):
         ignore_keys=None,
         metric_key_prefix="eval",
     ):
-        # Get the original eval loop results
-        output = super().evaluation_loop(
-            dataloader,
-            description,
-            prediction_loss_only,
-            ignore_keys,
-            metric_key_prefix,
+        # Run task-specific evaluation
+        output = compute_metrics_hf_train_loop(
+            task=self.args.task,
+            dataset_name=self.args.dataset_name,
+            run_name=self.args.run_name
+            if hasattr(self.args, "run_name")
+            else "default",
+            task_config=self.args.task_config,
+            intervenable=self.model,
+            tokenizer=self.tokenizer,
+            dataloader=dataloader,
+            data_items=self.eval_dataset.data_items
+            if hasattr(self.eval_dataset, "data_items")
+            else None,
+            trigger_tokens=self.args.trigger_tokens,
+            metric_key_prefix=metric_key_prefix,
+            greedy_decoding=self.args.greedy_decoding,
+            temperature=self.args.temperature,
+            top_p=self.args.top_p,
+            top_k=self.args.top_k,
         )
 
-        # Add token weight metrics for evaluation if available
+        # Add token weight metrics if available
         if hasattr(self.model, "get_token_weights"):
             token_weights = self.model.get_token_weights()
             if token_weights is not None:

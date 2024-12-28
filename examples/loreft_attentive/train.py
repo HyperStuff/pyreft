@@ -402,9 +402,7 @@ def finetune(cfg: DictConfig):
         per_device_train_batch_size=cfg.training.batch_size,
         per_device_eval_batch_size=cfg.training.eval_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
-        evaluation_strategy=cfg.training.eval_strategy
-        if cfg.task.name == "glue"
-        else "no",
+        evaluation_strategy=cfg.training.eval_strategy,
         eval_steps=cfg.training.eval_steps,
         save_strategy="epoch" if cfg.task.name == "glue" else "no",
         metric_for_best_model=cfg.task.metric_for_best_model
@@ -419,6 +417,7 @@ def finetune(cfg: DictConfig):
         warmup_ratio=cfg.training.warmup_ratio,
         token_sparsity_loss_weight=cfg.training.token_sparsity_loss_weight,
         token_binary_loss_weight=cfg.training.binary_loss_weight,
+        task_config=task_config,
         optim="adamw_torch",
         weight_decay=cfg.training.weight_decay,
         report_to="wandb" if cfg.logging.is_wandb else "none",

@@ -2,7 +2,7 @@
     "name": "pyreft",
     "build": {
         "context": "..",
-        "dockerfile": "../Dockerfile.mac"
+        "dockerfile": "../Dockerfile.linux"
     },
     "workspaceFolder": "/workspace/pyreft",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/pyreft,type=bind",
