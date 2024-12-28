@@ -399,10 +399,13 @@ def finetune(cfg: DictConfig):
         output_dir=f"{cfg.logging.output_dir}/{run_name}",
         run_name=run_name,
         num_train_epochs=cfg.training.epochs,
+        max_steps=cfg.training.max_steps,
         per_device_train_batch_size=cfg.training.batch_size,
         per_device_eval_batch_size=cfg.training.eval_batch_size,
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
-        evaluation_strategy=cfg.training.eval_strategy,
+        evaluation_strategy=cfg.training.eval_strategy
+        if cfg.task.name == "glue"
+        else "no",
         eval_steps=cfg.training.eval_steps,
         save_strategy="epoch" if cfg.task.name == "glue" else "no",
         metric_for_best_model=cfg.task.metric_for_best_model

@@ -23,6 +23,7 @@ model:
 training:
   seed: 42
   epochs: 1
+  max_steps: -1
   batch_size: 4
   eval_batch_size: 4
   gradient_accumulation_steps: 4

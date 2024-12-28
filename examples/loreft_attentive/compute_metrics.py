@@ -1,4 +1,5 @@
 import re
+from sys import breakpointhook
 
 import evaluate
 import numpy as np
@@ -238,6 +239,7 @@ def compute_metrics(
                     generation_args["top_k"] = top_k
 
                 # generate with intervention on prompt
+                # TODO(sidnb13) implement steering in prompt generation for now
                 _, steered_response = intervenable.generate(**generation_args)
 
                 # detokenize in batch

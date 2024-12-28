@@ -316,3 +316,139 @@ class AutomatedReftModel(ReftModel):
             )
 
         return base_outputs, counterfactual_outputs, token_weights
+
+    def generate(
+        self,
+        base,
+        sources: Optional[List] = None,
+        unit_locations: Optional[Dict] = None,
+        source_representations: Optional[Dict] = None,
+        intervene_on_prompt: bool = False,
+        subspaces: Optional[List] = None,
+        output_original_output: Optional[bool] = False,
+        **kwargs,
+    ):
+        """
+        Intervenable generation function that serves a
+        wrapper to regular model generate calls.
+
+        Currently, we support basic interventions **in the
+        prompt only**. We will support generation interventions
+        in the next release.
+
+        TODO: Unroll sources and intervene in the generation step.
+
+        Parameters:
+        base:                The base example.
+        sources:             A list of source examples.
+        unit_locations:      The intervention locations of
+                             base.
+        activations_sources: A list of representations.
+        intervene_on_prompt: Whether only intervene on prompt.
+        **kwargs:            All other generation parameters.
+
+        Return:
+        base_output: the non-intervened output of the base
+        input.
+        counterfactual_outputs: the intervened output of the
+        base input.
+        """
+        # TODO: forgive me now, i will change this later.
+        activations_sources = source_representations
+        if sources is not None and not isinstance(sources, list):
+            sources = [sources]
+
+        self._cleanup_states()
+
+        self._intervene_on_prompt = intervene_on_prompt
+        self._is_generation = True
+
+        if not intervene_on_prompt and unit_locations is None:
+            # that means, we intervene on every generated tokens!
+            unit_locations = {"base": 0}
+
+        # Token selection intervention
+        if self.do_token_selective_intervention is not None:
+            subspaces = [{}]
+            # Run token selection module with embeddings
+            if hasattr(self.model.model, "wte"):
+                embed_out = self.model.model.wte(base["input_ids"])
+            elif hasattr(self.model.model, "embed_tokens"):
+                embed_out = self.model.model.embed_tokens(base["input_ids"])
+            else:
+                raise NotImplementedError
+
+            token_weights = self.selection_module(embed_out)
+            subspaces[0]["token_weights"] = token_weights
+        else:
+            token_weights = None
+
+        # broadcast
+        unit_locations = self._broadcast_unit_locations(
+            get_batch_size(base), unit_locations
+        )
+        sources = [None] * len(self._intervention_group) if sources is None else sources
+        sources = self._broadcast_sources(sources)
+        activations_sources = self._broadcast_source_representations(
+            activations_sources
+        )
+        subspaces = self._broadcast_subspaces(get_batch_size(base), subspaces)
+
+        self._input_validation(
+            base,
+            sources,
+            unit_locations,
+            activations_sources,
+            subspaces,
+        )
+
+        base_outputs = None
+        if output_original_output:
+            # returning un-intervened output
+            base_outputs = self.model.generate(**base, **kwargs)
+
+        set_handlers_to_remove = None
+        try:
+            # intervene
+            if self.mode == "parallel":
+                set_handlers_to_remove = (
+                    self._wait_for_forward_with_parallel_intervention(
+                        sources,
+                        unit_locations,
+                        activations_sources,
+                        subspaces,
+                    )
+                )
+            elif self.mode == "serial":
+                set_handlers_to_remove = (
+                    self._wait_for_forward_with_serial_intervention(
+                        sources,
+                        unit_locations,
+                        activations_sources,
+                        subspaces,
+                    )
+                )
+
+            # run intervened generate
+            counterfactual_outputs = self.model.generate(**base, **kwargs)
+
+            collected_activations = []
+            if self.return_collect_activations:
+                for key in self.sorted_keys:
+                    if isinstance(self.interventions[key][0], CollectIntervention):
+                        collected_activations += self.activations[key]
+        except Exception as e:
+            raise e
+        finally:
+            if set_handlers_to_remove is not None:
+                set_handlers_to_remove.remove()
+            self._is_generation = False
+            self._cleanup_states(
+                skip_activation_gc=(sources is None and activations_sources is not None)
+                or self.return_collect_activations
+            )
+
+        if self.return_collect_activations:
+            return (base_outputs, collected_activations), counterfactual_outputs
+
+        return base_outputs, counterfactual_outputs
