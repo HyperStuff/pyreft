@@ -17,7 +17,6 @@ from transformers import (
     AutoTokenizer,
     DataCollatorForSeq2Seq,
     DataCollatorWithPadding,
-    TrainingArguments,
     set_seed,
 )
 from transformers.trainer_utils import EvalPrediction
@@ -33,8 +32,6 @@ from pyreft import (
     NoreftIntervention,  # remove ortho.  # remove ortho.
     ReftConfig,
     ReftDataCollator,
-    ReftTrainerForCausalLM,
-    ReftTrainerForSequenceClassification,
     TaskType,
     TokenSelectiveLoreftIntervention,
     get_reft_model,
@@ -253,6 +250,9 @@ def finetune(cfg: DictConfig):
             if len(result) > 1:
                 result["combined_score"] = np.mean(list(result.values())).item()
             return result
+
+    else:
+        pass
 
     # Initialize model based on task type
     if cfg.task.name in classification_tasks:

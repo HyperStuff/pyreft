@@ -102,7 +102,7 @@ class AutomatedReftModel(ReftModel):
             _subspaces = [[subspaces] * batch_size] * len(self.interventions)
         elif isinstance(subspaces, list) and isinstance(subspaces[0], dict):
             # Replicate dict for each batch element
-            _subspaces = [subspaces] * batch_size
+            _subspaces = [[subspaces] * batch_size] * len(self.interventions)
         else:
             # TODO: subspaces is easier to add more broadcast majic.
             raise NotImplementedError

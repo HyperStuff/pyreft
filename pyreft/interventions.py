@@ -97,8 +97,8 @@ class TokenSelectiveLoreftIntervention(LoreftIntervention):
             (self.act_fn(self.learned_source(base)) - rotated_base),
             self.rotate_layer.weight.T,
         )
-        if subspaces and subspaces[0].get("token_weights", None) is not None:
-            output = output * subspaces[0]["token_weights"]
+        if subspaces and subspaces[0][0].get("token_weights", None) is not None:
+            output = output * subspaces[0][0]["token_weights"]
         return self.dropout(output.to(base.dtype))
 
 

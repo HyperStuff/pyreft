@@ -21,7 +21,6 @@ from transformers.trainer_utils import (
 )
 from transformers.utils import logging
 
-from pyreft.utils import compute_metrics_hf_train_loop
 
 logger = logging.get_logger(__name__)
 
@@ -197,57 +196,6 @@ class TokenSelectiveReftTrainer(ReftTrainer):
             output.loss += sparsity_loss + binary_loss
 
         return (output, output) if return_outputs else output.loss
-
-    def evaluation_loop(
-        self,
-        dataloader,
-        description,
-        prediction_loss_only=None,
-        ignore_keys=None,
-        metric_key_prefix="eval",
-    ):
-        # Run task-specific evaluation
-        output = compute_metrics_hf_train_loop(
-            task=self.args.task,
-            dataset_name=self.args.dataset_name,
-            run_name=self.args.run_name
-            if hasattr(self.args, "run_name")
-            else "default",
-            task_config=self.args.task_config,
-            intervenable=self.model,
-            tokenizer=self.tokenizer,
-            dataloader=dataloader,
-            data_items=self.eval_dataset.data_items
-            if hasattr(self.eval_dataset, "data_items")
-            else None,
-            trigger_tokens=self.args.trigger_tokens,
-            metric_key_prefix=metric_key_prefix,
-            greedy_decoding=self.args.greedy_decoding,
-            temperature=self.args.temperature,
-            top_p=self.args.top_p,
-            top_k=self.args.top_k,
-        )
-
-        # Add token weight metrics if available
-        if hasattr(self.model, "get_token_weights"):
-            token_weights = self.model.get_token_weights()
-            if token_weights is not None:
-                output.metrics.update(
-                    {
-                        f"{metric_key_prefix}/mean_token_weight": token_weights.mean().item(),
-                        f"{metric_key_prefix}/token_weight_sparsity": (
-                            token_weights < 0.5
-                        )
-                        .float()
-                        .mean()
-                        .item(),
-                        f"{metric_key_prefix}/token_weight_max": token_weights.max().item(),
-                        f"{metric_key_prefix}/token_weight_min": token_weights.min().item(),
-                        f"{metric_key_prefix}/token_weight_temperature": self.model.selection_module.temperature.item(),
-                    }
-                )
-
-        return output
 
 
 class ReftTrainerForCausalLM(ReftTrainer):
