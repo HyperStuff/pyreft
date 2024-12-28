@@ -21,8 +21,8 @@ from transformers import (
 )
 from transformers.trainer_utils import EvalPrediction
 
-from dataset import LoReftGLUEDataset, LoReftSupervisedDataset
 from examples.loreft_attentive.compute_metrics import compute_metrics
+from examples.loreft_attentive.dataset import LoReftGLUEDataset, LoReftSupervisedDataset
 from pyreft import (
     ConsreftIntervention,  # constant bias only  # constant bias only
     DireftIntervention,  # direct edit reft  # direct edit reft
@@ -77,9 +77,7 @@ intervention_mapping = {
 
 
 @hydra.main(
-    version_base=None,
-    config_path="../../config",
-    config_name="loreft_attentive",
+    version_base=None, config_path="../../config", config_name="loreft_attentive"
 )
 def finetune(cfg: DictConfig):
     """
@@ -113,7 +111,14 @@ def finetune(cfg: DictConfig):
 
     model_name = cfg.model.name
     model_str = model_name.split("/")[-1]
-    train_dataset_str = cfg.task.train_dataset
+
+    train_dataset_index = (
+        cfg.task.train_dataset.index(cfg.training.train_dataset_key)
+        if cfg.training.train_dataset_key
+        else 0
+    )
+    train_dataset_str = cfg.task.train_dataset[train_dataset_index]
+
     now = datetime.datetime.now().strftime("%Y%m%d%H%M%S%f")
     if cfg.task.train_dataset is not None:
         run_name = f"{model_str}.{cfg.task.name}.{train_dataset_str}.{cfg.task.test_split}.{now}"
@@ -154,11 +159,11 @@ def finetune(cfg: DictConfig):
         need_resize = True
     else:
         tokenizer.pad_token = tokenizer.unk_token
+        tokenizer.pad_token_id = tokenizer.unk_token_id
         need_resize = False
 
     # load dataset splits
     assert cfg.task.name in task_config, f"Unrecognized task: {cfg.task.name}"
-    train_datasets = cfg.task.train_dataset
     if cfg.task.name == "glue":
         eval_datasets_names = cfg.task.train_dataset
     else:
@@ -170,12 +175,12 @@ def finetune(cfg: DictConfig):
 
     train_dataset = ReftDataset(
         cfg.task.name,
-        train_datasets[0]
+        train_dataset_str
         if cfg.task.name == "glue" or cfg.task.name == "ultrafeedback_pair"
         else (
-            os.path.join(cfg.task.data_dir, train_datasets[0])
+            os.path.join(cfg.task.data_dir, train_dataset_str)
             if cfg.task.data_dir is not None
-            else train_datasets[0]
+            else train_dataset_str
         ),
         tokenizer,
         data_split="train",
@@ -407,7 +412,7 @@ def finetune(cfg: DictConfig):
         if cfg.task.name == "glue"
         else "no",
         eval_steps=cfg.training.eval_steps,
-        save_strategy="epoch" if cfg.task.name == "glue" else "no",
+        save_strategy=cfg.training.eval_strategy if cfg.task.name == "glue" else "no",
         metric_for_best_model=cfg.task.metric_for_best_model
         if cfg.task.name == "glue"
         else None,
@@ -441,7 +446,7 @@ def finetune(cfg: DictConfig):
         if cfg.task.name == "glue"
         else None,
     )
-    trainer.train()
+    # trainer.train()
 
     # dump config
     config_dict = OmegaConf.to_container(cfg, resolve=False)
@@ -481,6 +486,7 @@ def finetune(cfg: DictConfig):
                 cfg.generation.temperature,
                 cfg.generation.top_p,
                 cfg.generation.top_k,
+                device=device,
             )
 
             eval_results.update(stats)

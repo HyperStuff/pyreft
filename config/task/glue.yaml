@@ -3,7 +3,7 @@ defaults:
   - _self_
 
 name: glue
-train_dataset: null
-eval_dataset: null
+train_dataset: [null]
+eval_dataset: [null]
 prompt_template: null
 trigger_tokens: null

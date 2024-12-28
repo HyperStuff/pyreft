@@ -378,7 +378,10 @@ class AutomatedReftModel(ReftModel):
             else:
                 raise NotImplementedError
 
-            token_weights = self.selection_module(embed_out)
+            # Unit locations are repeated for beam search to expand effective bsz
+            token_weights = self.selection_module(embed_out).repeat_interleave(
+                kwargs.get("num_beams", 1), dim=0
+            )
             subspaces[0]["token_weights"] = token_weights
         else:
             token_weights = None
@@ -451,4 +454,4 @@ class AutomatedReftModel(ReftModel):
         if self.return_collect_activations:
             return (base_outputs, collected_activations), counterfactual_outputs
 
-        return base_outputs, counterfactual_outputs
+        return base_outputs, counterfactual_outputs, token_weights

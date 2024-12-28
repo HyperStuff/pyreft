@@ -21,6 +21,7 @@ model:
 
 # Training settings
 training:
+  train_dataset_key: null
   seed: 42
   epochs: 1
   max_steps: -1
@@ -33,9 +34,9 @@ training:
   weight_decay: 0.0
   dropout: 0.0
   logging_steps: 1
-  eval_strategy: steps
+  eval_strategy: epoch
   eval_steps: 100
-  token_sparsity_loss_weight: 1.0
+  token_sparsity_loss_weight: 0.0
   binary_loss_weight: 0.0
 
 # Intervention settings

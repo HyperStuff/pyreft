@@ -1,11 +1,7 @@
 import os
-import random
-from collections import defaultdict
 from copy import deepcopy
 
 import torch
-import transformers
-from datasets import load_dataset
 from task_config import task_config
 from templates import *
 

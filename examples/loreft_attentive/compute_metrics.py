@@ -17,8 +17,6 @@ from transformers.utils import logging
 
 from pyreft import ReftDataCollator
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
 logger = logging.get_logger(__name__)
 
 
@@ -120,11 +118,15 @@ def compute_metrics(
     temperature=None,
     top_p=None,
     top_k=None,
+    device=None,
 ):
     # switch the tokenizer mode first for generation tasks
     if task != "glue":
         tokenizer.padding_side = "left"  # switch padding side for collator
         num_beams = 4 if task in ["commonsense", "math"] and not greedy_decoding else 1
+
+    intervenable.model.config.pad_token = tokenizer.pad_token
+    intervenable.model.config.pad_token_id = tokenizer.pad_token_id
 
     data_collator = (
         data_collator
@@ -165,7 +167,8 @@ def compute_metrics(
                 intervention_locations = None
 
             if task == "glue":
-                _, cf_outputs = intervenable(
+                # TODO(sidnb13) do something with the token weight outputs for eval?
+                _, cf_outputs, _ = intervenable(
                     {
                         "input_ids": inputs["input_ids"],
                         "attention_mask": inputs["attention_mask"],
@@ -239,8 +242,8 @@ def compute_metrics(
                     generation_args["top_k"] = top_k
 
                 # generate with intervention on prompt
-                # TODO(sidnb13) implement steering in prompt generation for now
-                _, steered_response = intervenable.generate(**generation_args)
+                # TODO(sidnb13) do something with the token weight outputs for eval?
+                _, steered_response, _  = intervenable.generate(**generation_args)
 
                 # detokenize in batch
                 actual_preds = tokenizer.batch_decode(
