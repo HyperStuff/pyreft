@@ -36,8 +36,13 @@ from pyreft import (
     TokenSelectiveLoreftIntervention,
     get_reft_model,
 )
+
 from pyreft.reft_model import AutomatedReftModel
-from pyreft.reft_trainer import ReftTrainingArguments, TokenSelectiveReftTrainer
+from pyreft.reft_trainer import (
+    ReftTrainingArguments,
+    TokenSelectiveReftTrainer,
+    TokenSelectiveReftTrainerForSequenceClassification,
+)
 
 try:
     # This library is our indicator that the required installs
@@ -95,7 +100,7 @@ def finetune(cfg: DictConfig):
         "ultrafeedback_pair",
     }
 
-    dtype = dtype_mapping[cfg.model.dtype]
+    dtype = dtype_mapping[cfg.model.dtype] if device != "mps" else torch.float
 
     # store/log run details
     print(
@@ -272,6 +277,9 @@ def finetune(cfg: DictConfig):
             torch_dtype=dtype if dtype != "float8" else None,
         )
 
+    model.config.pad_token_id = tokenizer.pad_token_id
+    model.config.padding_token = tokenizer.pad_token
+
     if need_resize:
         model.resize_token_embeddings(len(tokenizer))
 
@@ -435,7 +443,12 @@ def finetune(cfg: DictConfig):
     )
 
     # make trainer
-    trainer = TokenSelectiveReftTrainer(
+    trainer_cls = (
+        TokenSelectiveReftTrainerForSequenceClassification
+        if cfg.task.name in classification_tasks
+        else TokenSelectiveReftTrainer
+    )
+    trainer = trainer_cls(
         model=reft_model,
         tokenizer=tokenizer,
         args=training_args,

@@ -7,3 +7,4 @@ train_dataset: [null]
 eval_dataset: [null]
 prompt_template: null
 trigger_tokens: null
+metric_for_best_model: eval_matthews_correlation

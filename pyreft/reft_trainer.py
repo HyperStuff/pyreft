@@ -21,7 +21,6 @@ from transformers.trainer_utils import (
 )
 from transformers.utils import logging
 
-
 logger = logging.get_logger(__name__)
 
 
@@ -432,3 +431,71 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
             loss += sparsity_loss + binary_loss
 
         return (loss, cf_outputs) if return_outputs else loss
+
+    def evaluate(
+        self,
+        ignore_keys,
+    ):
+        # ensure everything is in eval mode
+        self.model.model.eval()
+        for k, v in self.model.interventions.items():
+            _ = v[0].eval()
+
+        batch_size = self.args.eval_batch_size
+        data_collator = self.data_collator
+        eval_dataset = self.eval_dataset
+        intervenable = self.model
+
+        dataloader = make_dataloader(
+            eval_dataset, batch_size, data_collator, shuffle=False
+        )
+
+        logger.info(f"***** Running In-Training Evaluation *****")
+        if has_length(dataloader):
+            logger.info(f"  Num examples = {self.num_examples(dataloader)}")
+        else:
+            logger.info("  Num examples: Unknown")
+        logger.info(f"  Batch size = {batch_size}")
+
+        eval_iterator = tqdm(dataloader, position=0, leave=True)
+        all_preds = []
+        all_labels = []
+        with torch.no_grad():
+            for step, inputs in enumerate(eval_iterator):
+                for k, v in inputs.items():
+                    if v is not None and isinstance(v, torch.Tensor):
+                        inputs[k] = v.to(self.model.get_device())
+
+                # [layers, batch_size, positions]
+                intervention_locations = (
+                    inputs["intervention_locations"].permute(1, 0, 2).tolist()
+                )
+                _, cf_outputs, token_weights = intervenable(
+                    {
+                        "input_ids": inputs["input_ids"],
+                        "attention_mask": inputs["attention_mask"],
+                    },
+                    unit_locations={"sources->base": (None, intervention_locations)},
+                )
+
+                all_preds += [cf_outputs.logits]
+                all_labels += [inputs["labels"]]
+        all_preds = torch.cat(all_preds, dim=0).cpu().to(torch.float32)
+        all_labels = torch.cat(all_labels, dim=0).cpu().to(torch.float32)
+        metrics = self.compute_metrics(
+            EvalPrediction(predictions=all_preds, label_ids=all_labels)
+        )
+        metrics = denumpify_detensorize(metrics)
+
+        metric_key_prefix = "eval"
+        for key in list(metrics.keys()):
+            if not key.startswith(f"{metric_key_prefix}_"):
+                metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
+
+        self.log(metrics)
+        self.control = self.callback_handler.on_evaluate(
+            self.args, self.state, self.control, metrics
+        )
+        self._memory_tracker.stop_and_update_metrics(metrics)
+
+        return metrics
