@@ -1,23 +1,5 @@
 import enum
-from dataclasses import dataclass
-from typing import Any, Optional
-
-import torch
-from pyvene.models.intervenable_base import IntervenableModelOutput
-
 from .reft_model import ReftModel
-
-
-@dataclass
-class TokenSelectiveIntervenableModelOutput(IntervenableModelOutput):
-    """
-    Output of the IntervenableModel, including original outputs, intervened outputs, and collected activations.
-    """
-
-    original_outputs: Optional[Any] = None
-    intervened_outputs: Optional[Any] = None
-    collected_activations: Optional[Any] = None
-    token_weights: Optional[torch.Tensor] = None
 
 class ReftType(str, enum.Enum):
     """

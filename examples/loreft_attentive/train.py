@@ -446,7 +446,7 @@ def finetune(cfg: DictConfig):
         if cfg.task.name == "glue"
         else None,
     )
-    # trainer.train()
+    trainer.train()
 
     # dump config
     config_dict = OmegaConf.to_container(cfg, resolve=False)

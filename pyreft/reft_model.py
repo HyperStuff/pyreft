@@ -1,9 +1,8 @@
-import token
-from typing import Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import pyvene as pv
 import torch
-from numpy import isin
 from pyvene.models.basic_utils import get_batch_size
 from pyvene.models.intervenable_base import IntervenableModelOutput
 from pyvene.models.interventions import CollectIntervention
@@ -14,6 +13,18 @@ from pyreft.modules import TokenSelectionAttention
 def count_parameters(model):
     """Count parameters of a model that require gradients"""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+@dataclass
+class TokenSelectiveIntervenableModelOutput(IntervenableModelOutput):
+    """
+    Output of the IntervenableModel, including original outputs, intervened outputs, and collected activations.
+    """
+
+    original_outputs: Optional[Any] = None
+    intervened_outputs: Optional[Any] = None
+    collected_activations: Optional[Any] = None
+    token_weights: Optional[torch.Tensor] = None
 
 
 class ReftModel(pv.IntervenableModel):
@@ -46,7 +57,7 @@ class ReftModel(pv.IntervenableModel):
         for k, v in self.interventions.items():
             if isinstance(v[0], pv.TrainableIntervention):
                 if k in self._intervention_reverse_link:
-                    if not self._intervention_reverse_link[k] in _linked_key_set:
+                    if self._intervention_reverse_link[k] not in _linked_key_set:
                         _linked_key_set.add(self._intervention_reverse_link[k])
                         trainable_intervention_parameters += count_parameters(v[0])
                 else:
@@ -89,8 +100,6 @@ class AutomatedReftModel(ReftModel):
                 dropout=kwargs.get("dropout", 0.0),
                 dtype=kwargs.get("dtype", torch.bfloat16),
             )
-        else:
-            self.selection_module = None
 
     def _broadcast_subspaces(self, batch_size, subspaces):
         """Broadcast simple subspaces input"""
@@ -294,7 +303,7 @@ class AutomatedReftModel(ReftModel):
 
         if self.return_collect_activations:
             if return_dict:
-                return IntervenableModelOutput(
+                return TokenSelectiveIntervenableModelOutput(
                     original_outputs=base_outputs,
                     intervened_outputs=counterfactual_outputs,
                     collected_activations=collected_activations,
@@ -308,7 +317,7 @@ class AutomatedReftModel(ReftModel):
             )
 
         if return_dict:
-            return IntervenableModelOutput(
+            return TokenSelectiveIntervenableModelOutput(
                 original_outputs=base_outputs,
                 intervened_outputs=counterfactual_outputs,
                 collected_activations=None,

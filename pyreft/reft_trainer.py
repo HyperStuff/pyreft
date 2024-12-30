@@ -174,9 +174,9 @@ class TokenSelectiveReftTrainer(ReftTrainer):
             # Log metrics about token weights
             self.log(
                 {
-                    "train/sparsity_loss": sparsity_loss.item(),
-                    "train/binary_loss": binary_loss.item(),
-                    "train/mean_token_weight": token_weights.mean().item(),
+                    "train/sparsity_loss": sparsity_loss.cpu().item(),
+                    "train/binary_loss": binary_loss.cpu().item(),
+                    "train/mean_token_weight": token_weights.mean().cpu().item(),
                     "train/token_weight_sparsity": (token_weights < 0.5)
                     .float()
                     .mean()
@@ -338,3 +338,97 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         self._memory_tracker.stop_and_update_metrics(metrics)
 
         return metrics
+
+class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrainer, ReftTrainerForSequenceClassification):
+    def compute_loss(
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+    ):
+        # run intervened forward pass
+        unit_locations = None
+        if "intervention_locations" in inputs:
+            unit_locations = {
+                "sources->base": (
+                    None,
+                    inputs["intervention_locations"].permute(1, 0, 2).tolist(),
+                )
+            }
+
+        _intervened_out = intervenable(
+            {
+                "input_ids": inputs["input_ids"],
+                "attention_mask": inputs["attention_mask"],
+            },
+            unit_locations=unit_locations,
+            labels=inputs["labels"],
+            subspaces=inputs["subspaces"].permute(1, 0, 2).tolist()
+            if "subspaces" in inputs
+            else None,
+        )
+
+        if len(_intervened_out) == 2:
+            _, cf_outputs = _intervened_out
+            token_weights = None
+        else:
+            _, cf_outputs, token_weights = _intervened_out
+
+        # classification loss on counterfactual labels
+        logits = cf_outputs.logits
+        labels = inputs["labels"]
+
+        if self.model.model.config.problem_type is None:
+            if self.model.model.num_labels == 1:
+                problem_type = "regression"
+            elif self.model.model.num_labels > 1 and (
+                labels.dtype == torch.long or labels.dtype == torch.int
+            ):
+                problem_type = "single_label_classification"
+            else:
+                problem_type = "multi_label_classification"
+        else:
+            problem_type = self.model.model.config.problem_type
+
+        if problem_type == "regression":
+            loss_fct = MSELoss()
+            if self.model.model.num_labels == 1:
+                loss = loss_fct(logits.squeeze(), labels.squeeze().to(torch.bfloat16))
+            else:
+                loss = loss_fct(logits, labels.to(torch.bfloat16))
+        elif problem_type == "single_label_classification":
+            loss_fct = CrossEntropyLoss()
+            loss = loss_fct(
+                logits.view(-1, self.model.model.num_labels), labels.view(-1)
+            )
+        elif problem_type == "multi_label_classification":
+            loss_fct = BCEWithLogitsLoss()
+            loss = loss_fct(logits, labels)
+
+        if token_weights is not None:
+            # Compute sparsity loss if enabled
+            sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
+                torch.sum(token_weights, dim=-1)
+            )
+            # Compute binary loss if enabled
+            binary_loss = (
+                self.args.token_binary_loss_weight
+                * (token_weights * (1 - token_weights)).mean()
+            )
+
+            # Log metrics about token weights
+            self.log(
+                {
+                    "train/sparsity_loss": sparsity_loss.cpu().item(),
+                    "train/binary_loss": binary_loss.cpu().item(),
+                    "train/mean_token_weight": token_weights.mean().cpu().item(),
+                    "train/token_weight_sparsity": (token_weights < 0.5)
+                    .float()
+                    .mean()
+                    .item(),
+                    "train/token_weight_max": token_weights.max().item(),
+                    "train/token_weight_min": token_weights.min().item(),
+                    "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
+                }
+            )
+
+            loss += sparsity_loss + binary_loss
+
+        return (loss, cf_outputs) if return_outputs else loss
