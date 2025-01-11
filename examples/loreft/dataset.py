@@ -49,7 +49,7 @@ class LoReftGLUEDataset(ReftDataset):
 
         # keys for prompt
         self.sentence1_key, self.sentence2_key = glue_task_to_keys[self.data_path]
-    
+
     def postprocess(self, kwargs):
         # get the number of classification labels
         is_regression = self.data_path == "stsb"
@@ -79,7 +79,7 @@ class LoReftGLUEDataset(ReftDataset):
         result["labels"] = output_ids
 
         return result, last_position
-    
+
 
 class LoReftSupervisedDataset(ReftDataset):
 
@@ -92,7 +92,7 @@ class LoReftSupervisedDataset(ReftDataset):
         self.trigger_tokens = dataset_config["trigger_tokens"]
         self.original_data_split = self.data_split
         self.test_split = kwargs["test_split"] if "test_split" in kwargs else None
-        
+
         # where to pull dataset from
         # instruction-tuning tasks should all eval on alpaca_eval
         if self.task in ["alpaca", "instruct", "ultrafeedback", "ultrafeedback_pair"] and self.data_split != "train":
@@ -117,7 +117,7 @@ class LoReftSupervisedDataset(ReftDataset):
                 range(original_dataset_size - 300, original_dataset_size))
         self.raw_dataset = self.task_dataset # also update the raw dataset pointer.
         return
-    
+
     def tokenize(self, data_item):
         result = {}
 
@@ -138,17 +138,17 @@ class LoReftSupervisedDataset(ReftDataset):
                 base_input = base_prompt + data_item["rejected_output"] + self.tokenizer.eos_token
             else:
                 base_input = base_prompt + data_item["output"] + self.tokenizer.eos_token
-        elif self.task == "gsm8k": 
+        elif self.task == "gsm8k":
             if "Meta-Llama-3-8B-Instruct" in self.tokenizer.name_or_path: # pretty bad workaround for llama-3, forgive me
                 system_prompt = "You are a helpful assistant."
                 # we remove the BOS, otherwise there will be redundant BOS tokens.
                 base_prompt = self.tokenizer.apply_chat_template(
-                    [{"role": "system", "content": system_prompt}, {"role": "user", "content": data_item['question']}], 
+                    [{"role": "system", "content": system_prompt}, {"role": "user", "content": data_item['question']}],
                     tokenize=False,
                 )[len("<|begin_of_text|>"):]
                 base_input = self.tokenizer.apply_chat_template(
                     [{"role": "system", "content": system_prompt}, {"role": "user", "content": data_item['question']},
-                     {"role": "assistant", "content": data_item["answer"]}], 
+                     {"role": "assistant", "content": data_item["answer"]}],
                     tokenize=False,
                 )[len("<|begin_of_text|>"):] + self.tokenizer.eos_token
             else: # setup is from https://github.com/yxli2123/LoftQ/
@@ -157,7 +157,7 @@ class LoReftSupervisedDataset(ReftDataset):
                 base_input = base_prompt + f"{data_item['answer']}{self.tokenizer.eos_token}".replace("####", "The final answer is: ")
         else:
             raise ValueError(f"Unrecognized task: {self.task}")
-            
+
         # tokenize
         base_prompt_ids = self.tokenizer(
             base_prompt, max_length=self.tokenizer.model_max_length, truncation=True, return_tensors="pt")["input_ids"][0]
@@ -169,7 +169,7 @@ class LoReftSupervisedDataset(ReftDataset):
             if self.task == "ultrafeedback_pair" and self.data_split == "train":
                 # base output takes chosen output to steer towards to.
                 base_output = base_prompt + data_item["chosen_output"] + self.tokenizer.eos_token
-                
+
                 base_output_ids = self.tokenizer(
                     base_output, max_length=self.tokenizer.model_max_length, truncation=True, return_tensors="pt")["input_ids"][0]
                 output_ids = base_output_ids
@@ -191,7 +191,7 @@ class LoReftSupervisedDataset(ReftDataset):
             else:
                 output_ids = deepcopy(base_input_ids)
                 output_ids[:base_prompt_length] = IGNORE_INDEX
-                
+
             result["input_ids"] = base_input_ids
             result["labels"] = output_ids
         else:

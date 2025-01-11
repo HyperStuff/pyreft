@@ -1,6 +1,7 @@
-import os
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence
+from pathlib import Path
+from typing import Dict, Optional
 
 import pyvene as pv
 import torch
@@ -25,16 +26,16 @@ logger = logging.get_logger(__name__)
 
 
 @dataclass
-class ReftDataCollator(object):
+class ReftDataCollator:
     """Collate examples for ReFT."""
 
-    data_collator: DataCollator
+    data_collator: DataCollator # type: ignore
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         batch_inputs = self.data_collator(instances)
         max_seq_length = batch_inputs["input_ids"].shape[-1]
         batch_inputs["intervention_locations"] = batch_inputs["intervention_locations"][
-            ..., :max_seq_length
+            ..., :max_seq_length,
         ]
         return batch_inputs
 
@@ -51,10 +52,10 @@ def make_data_collator(tokenizer, model) -> ReftDataCollator:
 
 
 def make_dataloader(
-    dataset: Dataset, batch_size: int, collate_fn: DataCollatorForSeq2Seq, shuffle: bool
+    dataset: Dataset, batch_size: int, collate_fn: DataCollatorForSeq2Seq, shuffle: bool,
 ) -> DataLoader:
     return DataLoader(
-        dataset, shuffle=shuffle, batch_size=batch_size, collate_fn=collate_fn
+        dataset, shuffle=shuffle, batch_size=batch_size, collate_fn=collate_fn,
     )
 
 
@@ -74,23 +75,23 @@ class ReftTrainingArguments(TrainingArguments):
 
 
 class ReftTrainer(Trainer):
-    def save_model(self, output_dir, _internal_call=False):
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        self.model.save_intervention(
-            save_directory=f"{output_dir}/intervenable_model", include_model=True
-        )
+    def save_model(self, output_dir: str, *, _internal_call: bool = False) -> None:
+            if not Path(output_dir).exists():
+                Path(output_dir).mkdir(parents=True)
+            self.model.save_intervention(
+                save_directory=f"{output_dir}/intervenable_model", include_model=True,
+            )
 
     def _load_best_model(self):
         logger.warning(
-            f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric})."
+            f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric}).",
         )
         self.model.load_intervention(
-            f"{self.state.best_model_checkpoint}/intervenable_model", include_model=True
+            f"{self.state.best_model_checkpoint}/intervenable_model", include_model=True,
         )
 
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -99,8 +100,9 @@ class ReftTrainer(Trainer):
                 unit_locations = {
                     "sources->base": (
                         None,
-                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
-                    )
+                        inputs["intervention_locations"].permute(
+                            1, 0, 2).tolist(),
+                    ),
                 }
             else:
                 # this is dummy for lora only baseline
@@ -126,7 +128,7 @@ class ReftTrainer(Trainer):
 
 class TokenSelectiveReftTrainer(ReftTrainer):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -135,8 +137,9 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                 unit_locations = {
                     "sources->base": (
                         None,
-                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
-                    )
+                        inputs["intervention_locations"].permute(
+                            1, 0, 2).tolist(),
+                    ),
                 }
             else:
                 # this is dummy for lora only baseline
@@ -162,7 +165,7 @@ class TokenSelectiveReftTrainer(ReftTrainer):
         if token_weights is not None:
             # Compute sparsity loss if enabled
             sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
-                torch.sum(token_weights, dim=-1)
+                torch.sum(token_weights, dim=-1),
             )
             # Compute binary loss if enabled
             binary_loss = (
@@ -176,14 +179,11 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                     "train/sparsity_loss": sparsity_loss.cpu().item(),
                     "train/binary_loss": binary_loss.cpu().item(),
                     "train/mean_token_weight": token_weights.mean().cpu().item(),
-                    "train/token_weight_sparsity": (token_weights < 0.5)
-                    .float()
-                    .mean()
-                    .item(),
+                    "train/token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
                     "train/token_weight_max": token_weights.max().item(),
                     "train/token_weight_min": token_weights.min().item(),
                     "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
-                }
+                },
             )
 
         # return
@@ -200,20 +200,20 @@ class TokenSelectiveReftTrainer(ReftTrainer):
 class ReftTrainerForCausalLM(ReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
         return make_dataloader(
-            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True
+            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True,
         )
 
 
 class TokenSelectiveReftTrainerForCausalLM(TokenSelectiveReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
         return make_dataloader(
-            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True
+            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True,
         )
 
 
 class ReftTrainerForSequenceClassification(ReftTrainer):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -222,7 +222,7 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
                 "sources->base": (
                     None,
                     inputs["intervention_locations"].permute(1, 0, 2).tolist(),
-                )
+                ),
             }
 
         _, cf_outputs = intervenable(
@@ -255,19 +255,19 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         if problem_type == "regression":
             loss_fct = MSELoss()
             if self.model.model.num_labels == 1:
-                loss = loss_fct(logits.squeeze(), labels.squeeze().to(torch.bfloat16))
+                loss = loss_fct(logits.squeeze(),
+                                labels.squeeze().to(torch.bfloat16))
             else:
                 loss = loss_fct(logits, labels.to(torch.bfloat16))
         elif problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(
-                logits.view(-1, self.model.model.num_labels), labels.view(-1)
+                logits.view(-1, self.model.model.num_labels), labels.view(-1),
             )
         elif problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
             loss = loss_fct(logits, labels)
 
-        # return
         return (loss, cf_outputs) if return_outputs else loss
 
     def evaluate(
@@ -285,10 +285,10 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         intervenable = self.model
 
         dataloader = make_dataloader(
-            eval_dataset, batch_size, data_collator, shuffle=False
+            eval_dataset, batch_size, data_collator, shuffle=False,
         )
 
-        logger.info(f"***** Running In-Training Evaluation *****")
+        logger.info("***** Running In-Training Evaluation *****")
         if has_length(dataloader):
             logger.info(f"  Num examples = {self.num_examples(dataloader)}")
         else:
@@ -313,7 +313,8 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
                         "input_ids": inputs["input_ids"],
                         "attention_mask": inputs["attention_mask"],
                     },
-                    unit_locations={"sources->base": (None, intervention_locations)},
+                    unit_locations={
+                        "sources->base": (None, intervention_locations)},
                 )
 
                 all_preds += [cf_outputs.logits]
@@ -321,7 +322,7 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         all_preds = torch.cat(all_preds, dim=0).cpu().to(torch.float32)
         all_labels = torch.cat(all_labels, dim=0).cpu().to(torch.float32)
         metrics = self.compute_metrics(
-            EvalPrediction(predictions=all_preds, label_ids=all_labels)
+            EvalPrediction(predictions=all_preds, label_ids=all_labels),
         )
         metrics = denumpify_detensorize(metrics)
 
@@ -332,15 +333,16 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
 
         self.log(metrics)
         self.control = self.callback_handler.on_evaluate(
-            self.args, self.state, self.control, metrics
+            self.args, self.state, self.control, metrics,
         )
         self._memory_tracker.stop_and_update_metrics(metrics)
 
         return metrics
 
+
 class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrainer, ReftTrainerForSequenceClassification):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False
+        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -349,7 +351,7 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
                 "sources->base": (
                     None,
                     inputs["intervention_locations"].permute(1, 0, 2).tolist(),
-                )
+                ),
             }
 
         _intervened_out = intervenable(
@@ -389,13 +391,14 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         if problem_type == "regression":
             loss_fct = MSELoss()
             if self.model.model.num_labels == 1:
-                loss = loss_fct(logits.squeeze(), labels.squeeze().to(torch.bfloat16))
+                loss = loss_fct(logits.squeeze(),
+                                labels.squeeze().to(torch.bfloat16))
             else:
                 loss = loss_fct(logits, labels.to(torch.bfloat16))
         elif problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(
-                logits.view(-1, self.model.model.num_labels), labels.view(-1)
+                logits.view(-1, self.model.model.num_labels), labels.view(-1),
             )
         elif problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
@@ -404,7 +407,7 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         if token_weights is not None:
             # Compute sparsity loss if enabled
             sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
-                torch.sum(token_weights, dim=-1)
+                torch.sum(token_weights, dim=-1),
             )
             # Compute binary loss if enabled
             binary_loss = (
@@ -418,14 +421,11 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
                     "train/sparsity_loss": sparsity_loss.cpu().item(),
                     "train/binary_loss": binary_loss.cpu().item(),
                     "train/mean_token_weight": token_weights.mean().cpu().item(),
-                    "train/token_weight_sparsity": (token_weights < 0.5)
-                    .float()
-                    .mean()
-                    .item(),
+                    "train/token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
                     "train/token_weight_max": token_weights.max().item(),
                     "train/token_weight_min": token_weights.min().item(),
                     "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
-                }
+                },
             )
 
             loss += sparsity_loss + binary_loss
@@ -447,10 +447,10 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         intervenable = self.model
 
         dataloader = make_dataloader(
-            eval_dataset, batch_size, data_collator, shuffle=False
+            eval_dataset, batch_size, data_collator, shuffle=False,
         )
 
-        logger.info(f"***** Running In-Training Evaluation *****")
+        logger.info("***** Running In-Training Evaluation *****")
         if has_length(dataloader):
             logger.info(f"  Num examples = {self.num_examples(dataloader)}")
         else:
@@ -475,7 +475,8 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
                         "input_ids": inputs["input_ids"],
                         "attention_mask": inputs["attention_mask"],
                     },
-                    unit_locations={"sources->base": (None, intervention_locations)},
+                    unit_locations={
+                        "sources->base": (None, intervention_locations)},
                 )
 
                 all_preds += [cf_outputs.logits]
@@ -483,7 +484,7 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         all_preds = torch.cat(all_preds, dim=0).cpu().to(torch.float32)
         all_labels = torch.cat(all_labels, dim=0).cpu().to(torch.float32)
         metrics = self.compute_metrics(
-            EvalPrediction(predictions=all_preds, label_ids=all_labels)
+            EvalPrediction(predictions=all_preds, label_ids=all_labels),
         )
         metrics = denumpify_detensorize(metrics)
 
@@ -494,7 +495,7 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
 
         self.log(metrics)
         self.control = self.callback_handler.on_evaluate(
-            self.args, self.state, self.control, metrics
+            self.args, self.state, self.control, metrics,
         )
         self._memory_tracker.stop_and_update_metrics(metrics)
 

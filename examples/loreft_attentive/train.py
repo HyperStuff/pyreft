@@ -1,5 +1,6 @@
 import copy
 import datetime
+from gc import enable
 import json
 import os
 
@@ -22,7 +23,10 @@ from transformers import (
 from transformers.trainer_utils import EvalPrediction
 
 from examples.loreft_attentive.compute_metrics import compute_metrics
-from examples.loreft_attentive.dataset import LoReftGLUEDataset, LoReftSupervisedDataset
+from examples.loreft_attentive.dataset import (
+    LoReftGLUEDataset,
+    LoReftSupervisedDataset,
+)
 from pyreft import (
     ConsreftIntervention,  # constant bias only  # constant bias only
     DireftIntervention,  # direct edit reft  # direct edit reft
@@ -36,7 +40,6 @@ from pyreft import (
     TokenSelectiveLoreftIntervention,
     get_reft_model,
 )
-
 from pyreft.reft_model import AutomatedReftModel
 from pyreft.reft_trainer import (
     ReftTrainingArguments,
@@ -62,7 +65,7 @@ else:
 
 classification_tasks = {"glue"}
 residual_stream_component_mapping = {
-    "robertaformaskedlm": "roberta.encoder.layer[%s].output"
+    "robertaformaskedlm": "roberta.encoder.layer[%s].output",
 }
 dtype_mapping = {
     "float32": torch.float32,
@@ -82,13 +85,12 @@ intervention_mapping = {
 
 
 @hydra.main(
-    version_base=None, config_path="../../config", config_name="loreft_attentive"
+    version_base=None,
+    config_path="../../config",
+    config_name="loreft_attentive",
 )
 def finetune(cfg: DictConfig):
-    """
-    Generic Representation Finetuning.
-    """
-
+    """Generic Representation Finetuning."""  # noqa: D401
     assert cfg.task.name in {
         "commonsense",
         "math",
@@ -109,7 +111,7 @@ def finetune(cfg: DictConfig):
         f"layers: {cfg.intervention.layers}, rank: {cfg.intervention.rank}, "
         f"position: {cfg.intervention.position}, epoch: {cfg.training.epochs}, "
         f"train_on_inputs: {cfg.task.train_on_inputs}, "
-        f"max_length: {cfg.model.max_length}, allow_cls_grad: {cfg.task.allow_cls_grad}"
+        f"max_length: {cfg.model.max_length}, allow_cls_grad: {cfg.task.allow_cls_grad}",
     )
 
     set_seed(cfg.training.seed)
@@ -191,12 +193,10 @@ def finetune(cfg: DictConfig):
         data_split="train",
         seed=cfg.training.seed,
         max_n_example=cfg.task.max_n_train_example,
-        **{
-            "num_interventions": len(layers),
-            "position": cfg.intervention.position,
-            "share_weights": cfg.intervention.share_weights,
-            "test_split": cfg.task.test_split,
-        },
+        num_interventions=len(layers),
+        position=cfg.intervention.position,
+        share_weights=cfg.intervention.share_weights,
+        test_split=cfg.task.test_split,
     )
 
     all_eval_datasets = {}
@@ -213,11 +213,9 @@ def finetune(cfg: DictConfig):
                 data_split=split,
                 seed=cfg.training.seed,
                 max_n_example=cfg.task.max_n_eval_example,
-                **{
-                    "num_interventions": len(layers),
-                    "position": cfg.intervention.position,
-                    "share_weights": cfg.intervention.share_weights,
-                },
+                num_interventions=len(layers),
+                position=cfg.intervention.position,
+                share_weights=cfg.intervention.share_weights,
             )
             all_eval_datasets[eval_dataset][split] = [raw_eval, raw_eval.raw_dataset]
     eval_datasets = all_eval_datasets
@@ -354,12 +352,11 @@ def finetune(cfg: DictConfig):
         num_selection_attn_heads=cfg.model.num_selection_attn_heads,
         start_temperature=cfg.model.start_temperature,
         end_temperature=cfg.model.end_temperature,
-        max_steps=(
-            cfg.training.epochs
-            * len(train_dataset)
-            // (cfg.training.batch_size * cfg.training.gradient_accumulation_steps)
-        ),
+        max_steps=(cfg.training.epochs * len(train_dataset) // cfg.training.batch_size),
         dtype=dtype,
+        scheduler=cfg.model.scheduler,
+        beta=cfg.model.beta,
+        enable_temp_scheduling=cfg.model.enable_temp_scheduling,
     )
 
     if cfg.lora.use_lora:
@@ -393,17 +390,21 @@ def finetune(cfg: DictConfig):
             {
                 "train/n_params": n_params,
                 "train/n_params_with_model": n_params_with_model,
-            }
+            },
         )
 
     # select collator based on the type
     if cfg.task.name in classification_tasks:
         data_collator_fn = DataCollatorWithPadding(
-            tokenizer=tokenizer, padding="longest"
+            tokenizer=tokenizer,
+            padding="longest",
         )
     else:
         data_collator_fn = DataCollatorForSeq2Seq(
-            tokenizer=tokenizer, model=model, label_pad_token_id=-100, padding="longest"
+            tokenizer=tokenizer,
+            model=model,
+            label_pad_token_id=-100,
+            padding="longest",
         )
     data_collator = ReftDataCollator(data_collator=data_collator_fn)
 
@@ -475,7 +476,7 @@ def finetune(cfg: DictConfig):
 
     # ensure everything is in eval mode
     reft_model.model.eval()
-    for k, v in reft_model.interventions.items():
+    for v in reft_model.interventions.values():
         _ = v[0].eval()
 
     print({"n_params": n_params})

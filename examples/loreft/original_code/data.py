@@ -80,7 +80,7 @@ def normalize_text(text):
     cleaned_text = re.sub(r'\s+-\s+', '-', cleaned_text)
     cleaned_text = re.sub(r'\s+([$%.,!?;:])', r'\1', cleaned_text)
     return cleaned_text
-    
+
 
 def create_directory(path):
     """Create directory if not exist"""
@@ -128,7 +128,7 @@ def generate_and_tokenize_prompt(tokenizer, data_point, train_on_inputs=True, cu
                                                                 ]  # could be sped up, probably
     return tokenized_full_prompt, user_prompt_len
 
-    
+
 def chunk(iterable, chunksize):
     # if iterable is a list, we chunk with simple list indexing
     if isinstance(iterable, list):
@@ -173,7 +173,7 @@ def get_intervention_locations(share_weights, position, last_position, _first_n,
             left_intervention_locations += [pad_position for _ in range(right_len-left_len)]
         intervention_locations = [left_intervention_locations]*(len(layers)//2) + \
             [right_intervention_locations]*(len(layers)//2)
-    
+
     return intervention_locations
 
 
@@ -210,16 +210,16 @@ def reformat_by_task(
             first_n = int(position.strip("f"))
         elif "l" in position:
             last_n = int(position.strip("l"))
-    
+
     if task == "glue":
-        task_dataset = load_dataset(task, dataset)
+        task_dataset = load_dataset(task, dataset, trust_remote_code=True)
         task_dataset = task_dataset[split]
 
         if split == "train":
             task_dataset = task_dataset.shuffle(seed=seed)
         if max_n_example is not None:
             task_dataset = task_dataset.select(range(max_n_example))
-        
+
         sentence1_key, sentence2_key = glue_task_to_keys[dataset]
 
         # get the number of classification labels
@@ -229,7 +229,7 @@ def reformat_by_task(
             num_labels = len(label_list)
         else:
             num_labels = 1
-        
+
         for i, data_item in enumerate(tqdm(task_dataset)):
 
             # tokenize
@@ -250,7 +250,7 @@ def reformat_by_task(
             result["intervention_locations"].append(intervention_locations)
             result["labels"].append(output_ids)
             result["id"].append(i)
-            
+
             # add a single padding token AFTER input_ids and fix everything
             result["input_ids"][-1] = torch.cat((result["input_ids"][-1], torch.tensor([tokenizer.pad_token_id,])))
             result["attention_mask"].append((result["input_ids"][-1] != tokenizer.pad_token_id).int())
@@ -260,7 +260,7 @@ def reformat_by_task(
         if task in ["alpaca", "instruct", "ultrafeedback"] and split != "train":
             if dataset == "alpaca_eval":
                 # alpaca eval test script for now
-                task_dataset = load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval")["eval"]
+                task_dataset = load_dataset("tatsu-lab/alpaca_eval", "alpaca_eval", trust_remote_code=True)["eval"]
             else:
                 raise NotImplementedError() # not implemented yet
         elif task == "gsm8k":
@@ -286,10 +286,10 @@ def reformat_by_task(
             task_dataset = task_dataset.shuffle(seed=seed)
         if max_n_example is not None:
             task_dataset = task_dataset.select(range(max_n_example))
-        
+
         # tokenize and intervene
         for i, data_item in enumerate(tqdm(task_dataset)):
-            
+
             if use_normalized_template: # format task-specific prompt
 
                 # set up prompt
@@ -314,7 +314,7 @@ def reformat_by_task(
                         tokenizer.eos_token
                 else:
                     raise ValueError(f"Unrecognized task: {task}")
-                
+
                 # tokenize
                 base_prompt_ids = tokenizer(
                     base_prompt, max_length=max_length, truncation=True, return_tensors="pt")["input_ids"][0]
@@ -326,7 +326,7 @@ def reformat_by_task(
                     # mask prompt in labels
                     if not train_on_inputs:
                         output_ids[:base_prompt_length] = -100
-                        
+
                     result["input_ids"].append(base_input_ids)
                     result["labels"].append(output_ids)
                 else:
@@ -361,7 +361,7 @@ def reformat_by_task(
                 share_weights, position, last_position, first_n, last_n, layers, pad_mode="first")
             result["intervention_locations"].append(intervention_locations)
             result["id"].append(i)
-            
+
             # add a single padding token BEFORE input_ids and fix everything
             result["input_ids"][-1] = torch.cat((torch.tensor([tokenizer.pad_token_id,]), result["input_ids"][-1]))
             if split == "train":
@@ -398,7 +398,7 @@ def load_task(
         eval_datasets = task_config[task]["eval_datasets"] if eval_dataset is None else [eval_dataset]
     task_prompt_template = task_config[task]["task_prompt_template"]
     trigger_tokens = task_config[task]["trigger_tokens"]
-    
+
     # load data
     raw_train = defaultdict(list)
     for dataset in train_datasets:

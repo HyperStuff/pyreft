@@ -16,7 +16,7 @@ from train import (
 
 # setup for gemma
 pv.type_to_module_mapping[transformers.GemmaForSequenceClassification] = {
-    "block_output": ("model.layers[%s]", 
+    "block_output": ("model.layers[%s]",
                    pv.models.constants.CONST_OUTPUT_HOOK),
 }
 pv.type_to_dimension_mapping[transformers.GemmaForSequenceClassification] = {
@@ -73,7 +73,7 @@ def evaluate(path: str):
             data_split="train",
             dataset=filtered_dataset,
             **{"num_interventions": len(layers),
-            "position": position, 
+            "position": position,
             "share_weights": share_weights},
             **fields,
         )
@@ -95,7 +95,7 @@ def evaluate(path: str):
         )
         result = trainer.evaluate()
         results[subset] = result["accuracy"]
-    
+
     # print summary
     for k, v in results.items():
         print(f"{k}: {v}")

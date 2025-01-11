@@ -1,3 +1,5 @@
+from gc import enable
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -7,19 +9,15 @@ from pyvene.models.basic_utils import get_batch_size
 from pyvene.models.intervenable_base import IntervenableModelOutput
 from pyvene.models.interventions import CollectIntervention
 
-from pyreft.modules import TokenSelectionAttention
-
 
 def count_parameters(model):
-    """Count parameters of a model that require gradients"""
+    """Count parameters of a model that require gradients."""
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
 @dataclass
 class TokenSelectiveIntervenableModelOutput(IntervenableModelOutput):
-    """
-    Output of the IntervenableModel, including original outputs, intervened outputs, and collected activations.
-    """
+    """Output of the IntervenableModel, including original outputs, intervened outputs, and collected activations."""
 
     original_outputs: Optional[Any] = None
     intervened_outputs: Optional[Any] = None
@@ -27,16 +25,90 @@ class TokenSelectiveIntervenableModelOutput(IntervenableModelOutput):
     token_weights: Optional[torch.Tensor] = None
 
 
-class ReftModel(pv.IntervenableModel):
-    """
-    Base model for Reft methods.
-    """
+class TokenSelectionAttention(torch.nn.Module):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        start_temperature: float,
+        end_temperature: int,
+        total_steps: int,
+        dropout: float = 0.0,
+        dtype: torch.dtype = torch.float32,
+        scheduler: str = "linear",
+        beta: float = 12,
+        enable_temp_scheduling: bool = True,
+    ) -> None:
+        super().__init__()
 
-    def __init__(self, config, model, **kwargs):
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.start_temperature = start_temperature
+        self.end_temperature = end_temperature
+        self.total_steps = total_steps
+        self.dtype = dtype
+        self.scheduler = scheduler
+        self.beta = beta
+
+        self.temperature = torch.nn.Parameter(
+            torch.ones(1, 1, 1, dtype=dtype) * self.start_temperature,
+            requires_grad=False,
+        )
+
+        self.attn = torch.nn.MultiheadAttention(
+            self.embed_dim,
+            self.num_heads,
+            dropout=dropout,
+            dtype=dtype,
+        )
+        self.layernorm = torch.nn.LayerNorm(self.embed_dim, dtype=dtype)
+        self.down_proj = torch.nn.Linear(self.embed_dim, 1, dtype=dtype)
+        self._current_step = 0
+        self.enable_temp_scheduling = enable_temp_scheduling
+
+        self.register_backward_hook(self._update_temperature)
+
+    def _update_temperature(self, *args):
+        self._current_step = min(self._current_step + 1, self.total_steps)
+
+        if self.scheduler == "linear":
+            current_temp = self.start_temperature + (
+                self.end_temperature - self.start_temperature
+            ) * (self._current_step / self.total_steps)
+        elif self.scheduler == "cosine":
+            current_temp = self.start_temperature + (
+                self.end_temperature - self.start_temperature
+            ) * 0.5 * (1 + math.cos(math.pi * self._current_step / self.total_steps))
+        elif self.scheduler == "sigmoid":
+            current_temp = self.start_temperature + (
+                self.end_temperature - self.start_temperature
+            ) * 1 / (
+                1 + math.exp(-self.beta * (self._current_step / self.total_steps - 0.5))
+            )
+
+        self.temperature.data.fill_(current_temp)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Uses bidirectional self-attention to compute token weights."""
+        out, _ = self.attn(x, x, x)
+        out = self.layernorm(out)
+
+        if self.enable_temp_scheduling:
+            return torch.nn.functional.sigmoid(
+                self.down_proj(out) / self.temperature,
+            )
+        else:
+            return torch.nn.functional.sigmoid(self.down_proj(out))
+
+
+class ReftModel(pv.IntervenableModel):
+    """Base model for Reft methods."""
+
+    def __init__(self, config, model, **kwargs) -> None:
         super().__init__(config, model, **kwargs)
 
     @staticmethod
-    def _convert_to_reft_model(intervenable_model):
+    def _convert_to_reft_model(intervenable_model) -> "ReftModel":
         reft_model = ReftModel(intervenable_model.config, intervenable_model.model)
         # Copy any other necessary attributes
         for attr in vars(intervenable_model):
@@ -44,15 +116,13 @@ class ReftModel(pv.IntervenableModel):
         return reft_model
 
     @staticmethod
-    def load(*args, **kwargs):
+    def load(*args, **kwargs) -> "ReftModel":
         model = pv.IntervenableModel.load(*args, **kwargs)
         return ReftModel._convert_to_reft_model(model)
 
     def print_trainable_parameters(self):
-        """
-        Print trainable parameters.
-        """
-        _linked_key_set = set([])
+        """Print trainable parameters."""
+        _linked_key_set = set()
         trainable_intervention_parameters = 0
         for k, v in self.interventions.items():
             if isinstance(v[0], pv.TrainableIntervention):
@@ -75,20 +145,19 @@ class ReftModel(pv.IntervenableModel):
 
         print(
             f"trainable intervention params: {trainable_intervention_parameters:,d} || trainable model params: {trainable_model_parameters:,d}\n"
-            f"model params: {all_model_parameters:,d} || trainable%: {100 * total_trainable_parameters / all_model_parameters}"
+            f"model params: {all_model_parameters:,d} || trainable%: {100 * total_trainable_parameters / all_model_parameters}",
         )
 
 
 class AutomatedReftModel(ReftModel):
-    """
-    Automated token selection Reft Model.
-    """
+    """Automated token selection Reft Model."""
 
-    def __init__(self, config, model, **kwargs):
+    def __init__(self, config, model, **kwargs) -> None:
         super().__init__(config, model, **kwargs)
 
         self.do_token_selective_intervention = kwargs.get(
-            "do_token_selective_intervention", False
+            "do_token_selective_intervention",
+            False,
         )
         if self.do_token_selective_intervention:
             self.selection_module = TokenSelectionAttention(
@@ -99,10 +168,13 @@ class AutomatedReftModel(ReftModel):
                 total_steps=kwargs.get("max_steps", 1000),
                 dropout=kwargs.get("dropout", 0.0),
                 dtype=kwargs.get("dtype", torch.bfloat16),
+                scheduler=kwargs.get("scheduler", "linear"),
+                beta=kwargs.get("beta", 12),
+                enable_temp_scheduling=kwargs.get("enable_temp_scheduling", True),
             )
 
     def _broadcast_subspaces(self, batch_size, subspaces):
-        """Broadcast simple subspaces input"""
+        """Broadcast simple subspaces input."""
         _subspaces = subspaces
         if isinstance(subspaces, int):
             _subspaces = [[[subspaces]] * batch_size] * len(self.interventions)
@@ -112,7 +184,7 @@ class AutomatedReftModel(ReftModel):
         elif isinstance(subspaces, list) and isinstance(subspaces[0], dict):
             # Replicate dict for each batch element
             _subspaces = [[subspaces] * batch_size] * len(self.interventions)
-        else:
+        elif subspaces is not None:
             # TODO: subspaces is easier to add more broadcast majic.
             raise NotImplementedError
         return _subspaces
@@ -129,8 +201,7 @@ class AutomatedReftModel(ReftModel):
         return_dict: Optional[bool] = None,
         use_cache: Optional[bool] = None,
     ):
-        """
-        Main forward function that serves a wrapper to
+        """Main forward function that serves a wrapper to
         actual model forward calls. It will use forward
         hooks to do interventions.
 
@@ -138,7 +209,8 @@ class AutomatedReftModel(ReftModel):
         get activations. We will use these activations to
         intervene on our base example.
 
-        Parameters:
+        Parameters
+        ----------
         base:                The base example.
         sources:             A list of source examples.
         unit_locations:      The intervention locations.
@@ -151,8 +223,8 @@ class AutomatedReftModel(ReftModel):
         counterfactual_outputs: the intervened output of the
         base input.
 
-        Notes:
-
+        Notes
+        -----
         1) unit_locations
         unit_locations is a dict where keys are tied with
         example pairs involved in one intervention as,
@@ -193,6 +265,7 @@ class AutomatedReftModel(ReftModel):
 
         Since we now support group-based intervention, the number of sources
         should be equal to the total number of groups.
+
         """
         # TODO: forgive me now, i will change this later.
         activations_sources = source_representations
@@ -212,7 +285,7 @@ class AutomatedReftModel(ReftModel):
         ):
             return self.model(**base), None
 
-        if self.do_token_selective_intervention is not None:
+        if self.do_token_selective_intervention:
             subspaces = [{}]
             # Run token selection module with embeddings
             if hasattr(self.model.model, "wte"):
@@ -229,12 +302,13 @@ class AutomatedReftModel(ReftModel):
 
         # broadcast
         unit_locations = self._broadcast_unit_locations(
-            get_batch_size(base), unit_locations
+            get_batch_size(base),
+            unit_locations,
         )
         sources = [None] * len(self._intervention_group) if sources is None else sources
         sources = self._broadcast_sources(sources)
         activations_sources = self._broadcast_source_representations(
-            activations_sources
+            activations_sources,
         )
         subspaces = self._broadcast_subspaces(get_batch_size(base), subspaces)
 
@@ -298,7 +372,7 @@ class AutomatedReftModel(ReftModel):
         finally:
             self._cleanup_states(
                 skip_activation_gc=(sources is None and activations_sources is not None)
-                or self.return_collect_activations
+                or self.return_collect_activations,
             )
 
         if self.return_collect_activations:
@@ -337,8 +411,7 @@ class AutomatedReftModel(ReftModel):
         output_original_output: Optional[bool] = False,
         **kwargs,
     ):
-        """
-        Intervenable generation function that serves a
+        """Intervenable generation function that serves a
         wrapper to regular model generate calls.
 
         Currently, we support basic interventions **in the
@@ -347,7 +420,8 @@ class AutomatedReftModel(ReftModel):
 
         TODO: Unroll sources and intervene in the generation step.
 
-        Parameters:
+        Parameters
+        ----------
         base:                The base example.
         sources:             A list of source examples.
         unit_locations:      The intervention locations of
@@ -361,6 +435,7 @@ class AutomatedReftModel(ReftModel):
         input.
         counterfactual_outputs: the intervened output of the
         base input.
+
         """
         # TODO: forgive me now, i will change this later.
         activations_sources = source_representations
@@ -377,7 +452,7 @@ class AutomatedReftModel(ReftModel):
             unit_locations = {"base": 0}
 
         # Token selection intervention
-        if self.do_token_selective_intervention is not None:
+        if self.do_token_selective_intervention:
             subspaces = [{}]
             # Run token selection module with embeddings
             if hasattr(self.model.model, "wte"):
@@ -389,7 +464,8 @@ class AutomatedReftModel(ReftModel):
 
             # Unit locations are repeated for beam search to expand effective bsz
             token_weights = self.selection_module(embed_out).repeat_interleave(
-                kwargs.get("num_beams", 1), dim=0
+                kwargs.get("num_beams", 1),
+                dim=0,
             )
             subspaces[0]["token_weights"] = token_weights
         else:
@@ -397,12 +473,13 @@ class AutomatedReftModel(ReftModel):
 
         # broadcast
         unit_locations = self._broadcast_unit_locations(
-            get_batch_size(base), unit_locations
+            get_batch_size(base),
+            unit_locations,
         )
         sources = [None] * len(self._intervention_group) if sources is None else sources
         sources = self._broadcast_sources(sources)
         activations_sources = self._broadcast_source_representations(
-            activations_sources
+            activations_sources,
         )
         subspaces = self._broadcast_subspaces(get_batch_size(base), subspaces)
 
@@ -457,7 +534,7 @@ class AutomatedReftModel(ReftModel):
             self._is_generation = False
             self._cleanup_states(
                 skip_activation_gc=(sources is None and activations_sources is not None)
-                or self.return_collect_activations
+                or self.return_collect_activations,
             )
 
         if self.return_collect_activations:

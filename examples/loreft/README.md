@@ -17,10 +17,12 @@ bash load_datasets.sh
 We copy everything from [LLM-Adapters](https://github.com/AGI-Edgerunners/LLM-Adapters/tree/main) for the commonsense and math reasoning dataset setup. We use a parsed version of [Ultrafeedback dataset](https://huggingface.co/datasets/argilla/ultrafeedback-binarized-preferences-cleaned) for instruct-tuning. Specifically, we get:
 
 - Training data for commonsense and math reasoning:
+
   - [`commonsense_170k.json`](https://github.com/AGI-Edgerunners/LLM-Adapters/blob/main/ft-training_set/commonsense_170k.json)
   - [`math_10k.json`](https://github.com/AGI-Edgerunners/LLM-Adapters/blob/main/ft-training_set/math_10k.json)
 
 - Evaluation data for commonsense and math reasoning are included in:
+
   - [`LLM-Adapters/dataset`](https://github.com/AGI-Edgerunners/LLM-Adapters/tree/main/dataset)
 
 - For instrution following training:
@@ -30,10 +32,9 @@ We copy everything from [LLM-Adapters](https://github.com/AGI-Edgerunners/LLM-Ad
 
 `pyreft` is built after we aggregate all of our results. All of our results are based on our original source code under the folder [`original_code`](https://github.com/stanfordnlp/pyreft/blob/main/examples/loreft/original_code). If you want to replicate our results more closely, feel free to read the README in the original source code folder.
 
-
 ## Hyperparameter tuning
 
-As described in our Appendix C in the paper, we are using the last 300 examples from  the GSM8K training set for hyperparameter tuning. Here is an example of our running command:
+As described in our Appendix C in the paper, we are using the last 300 examples from the GSM8K training set for hyperparameter tuning. Here is an example of our running command:
 
 ```bash
 python train.py -task gsm8k \
@@ -124,11 +125,13 @@ Note that `max_length` has to set to 768 to ensure a fair comparison, since our 
 ### Offline evaluation with [Alpaca-Eval v1.0](https://github.com/tatsu-lab/alpaca_eval/)
 
 We use [Alpaca-Eval v1.0](https://github.com/tatsu-lab/alpaca_eval/) to automatically evaluate our instruct-tuned model with GPT-4. To evaluate, you firstn need to install Alpaca-Eval:
+
 ```bash
 pip install alpaca-eval
 ```
 
 Since we evaluate against `text-davinci-003`, you need to first [download its generation](https://github.com/tatsu-lab/alpaca_eval/blob/main/results/text_davinci_003/model_outputs.json) provided in the Alpaca-Eval repo. Please make sure you have an OpenAI account, and get your OpenAI API key. Now, you can run the commend to evaluate:
+
 ```bash
 export OPENAI_API_KEY=<YOUR_OPENAI_KEY>
 
@@ -187,5 +190,3 @@ python train.py -task math \
 ```
 
 You only need to add `--use_lora` flag to enable this. Feel free to look at the code for our implementation.
-
-

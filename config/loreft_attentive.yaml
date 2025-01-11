@@ -16,8 +16,11 @@ model:
   embed_dim: 4096
   num_selection_attn_heads: 1
   start_temperature: 1.0
-  end_temperature: 1e-5
+  end_temperature: 1e-3
   do_token_selection: true
+  scheduler: "linear"
+  beta: 12.0
+  enable_temp_scheduling: true
 
 # Training settings
 training:
@@ -26,8 +29,8 @@ training:
   epochs: 1
   max_steps: -1
   batch_size: 4
-  eval_batch_size: 4
-  gradient_accumulation_steps: 4
+  eval_batch_size: 16
+  gradient_accumulation_steps: 8
   learning_rate: 5e-3
   schedule: "linear"
   warmup_ratio: 0.0
@@ -47,7 +50,7 @@ intervention:
   position: "f2048"
   act_fn: null
   add_bias: false
-  share_weights: false
+  share_weights: true
   # For token selective attn module
   num_heads: 4
   start_temperature: 1
@@ -64,7 +67,7 @@ lora:
 
 # Logging settings
 logging:
-  is_wandb: false
+  is_wandb: true
   wandb_name: null
   wandb_proj: "HyperReFT"
   wandb_entity: "sidharth-baskaran-georgia-institute-of-technology"

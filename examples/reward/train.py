@@ -23,7 +23,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # setup for gemma
 pv.type_to_module_mapping[transformers.GemmaForSequenceClassification] = {
-    "block_output": ("model.layers[%s]", 
+    "block_output": ("model.layers[%s]",
                    pv.models.constants.CONST_OUTPUT_HOOK),
 }
 pv.type_to_dimension_mapping[transformers.GemmaForSequenceClassification] = {
@@ -135,7 +135,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, mod
         data_args.data_path, "all", tokenizer,
         data_split="train",
         seed=training_args.seed, max_n_example=training_args.max_n_train_example,
-        **{"num_interventions": len(layers), "position": training_args.position, 
+        **{"num_interventions": len(layers), "position": training_args.position,
            "share_weights": training_args.share_weights},
         **fields,
     )
@@ -143,7 +143,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, mod
         data_args.data_path, "all", tokenizer,
         data_split="val",
         seed=training_args.seed, max_n_example=training_args.max_n_eval_example,
-        **{"num_interventions": len(layers), "position": training_args.position, 
+        **{"num_interventions": len(layers), "position": training_args.position,
            "share_weights": training_args.share_weights},
         **fields,
     )
@@ -196,7 +196,7 @@ def train():
         "layer": l, "component": f"block_output",
         "low_rank_dimension": training_args.rank,
         "intervention": LoreftIntervention(
-            embed_dim=model.config.hidden_size, 
+            embed_dim=model.config.hidden_size,
             low_rank_dimension=training_args.rank,
         )
     } for l in layers]
@@ -257,8 +257,8 @@ def train():
             "allenai/reward-bench", None, tokenizer,
             data_split="train",
             dataset=filtered_dataset,
-            **{"num_interventions": len(layers), 
-               "position": training_args.position, 
+            **{"num_interventions": len(layers),
+               "position": training_args.position,
                "share_weights": training_args.share_weights},
             **fields,
         )
@@ -266,7 +266,7 @@ def train():
         # run eval
         metric = trainer.evaluate(eval_dataset=eval_dataset, metric_key_prefix=f"eval_{subset}")
         metrics[subset] = metric[f"eval_{subset}_accuracy"]
-    
+
     # store rewardbench metrics
     with open(os.path.join(training_args.output_dir, "rewardbench_metrics.json"), "w") as f:
         json.dump(metrics, f)
