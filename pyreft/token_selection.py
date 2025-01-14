@@ -27,12 +27,13 @@ class ScaledDotProductAttention(torch.nn.Module):
         - **attn**: tensor containing the attention (alignment) from the encoder outputs.
     """
 
-    def __init__(self, dim: int):
+    def __init__(self, dim: int, dtype: torch.dtype):
         super(ScaledDotProductAttention, self).__init__()
         self.sqrt_dim = np.sqrt(dim)
-        self.W_q = torch.nn.Linear(dim, dim, bias=False)
-        self.W_k = torch.nn.Linear(dim, dim, bias=False)
-        self.W_v = torch.nn.Linear(dim, dim, bias=False)
+        self.dtype = dtype
+        self.W_q = torch.nn.Linear(dim, dim, bias=False, dtype=dtype)
+        self.W_k = torch.nn.Linear(dim, dim, bias=False, dtype=dtype)
+        self.W_v = torch.nn.Linear(dim, dim, bias=False, dtype=dtype)
 
     def forward(
         self,
@@ -58,7 +59,7 @@ class ScaledDotProductAttention(torch.nn.Module):
 class STEFunction(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input):
-        return (input > 0.5).float()
+        return (input > 0.5).to(input.dtype)
 
     @staticmethod
     def backward(ctx, grad_output):

@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from numpy import dtype
 import pyvene as pv
+from ray import get
 import torch
 from pyvene.models.basic_utils import get_batch_size
 from pyvene.models.intervenable_base import IntervenableModelOutput
@@ -85,7 +87,7 @@ class AutomatedReftModel(ReftModel):
         if self.do_token_selective_intervention:
             self.use_attn_weights_for_selection = kwargs.get("use_attn_weights", False)
             self.selection_module = ScaledDotProductAttention(
-                kwargs.get("embed_dim", 768)
+                kwargs.get("embed_dim", 768), dtype=kwargs.get("dtype", torch.bfloat16)
             )
             self.discrete_selector = DiscreteTokenSelection(
                 embed_dim=kwargs.get("embed_dim", 768),

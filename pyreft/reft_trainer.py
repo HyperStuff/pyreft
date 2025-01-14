@@ -193,7 +193,7 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                     "token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
                     "token_weight_max": token_weights.max().item(),
                     "token_weight_min": token_weights.min().item(),
-                    "token_weight_temperatures": intervenable.selection_module.get_temperature(),
+                    "token_weight_temperatures": intervenable.discrete_selector.get_temperature(),
                     "entropy_loss": entropy_loss.cpu().item()
                     if entropy_loss is not None
                     else None,
