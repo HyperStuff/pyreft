@@ -1,6 +1,5 @@
 import copy
 import datetime
-from gc import enable
 import json
 import os
 
@@ -349,14 +348,12 @@ def finetune(cfg: DictConfig):
         instance_cls=AutomatedReftModel,
         do_token_selective_intervention=cfg.model.do_token_selection,
         embed_dim=cfg.model.embed_dim,
-        num_selection_attn_heads=cfg.model.num_selection_attn_heads,
         start_temperature=cfg.model.start_temperature,
         end_temperature=cfg.model.end_temperature,
         max_steps=(cfg.training.epochs * len(train_dataset) // cfg.training.batch_size),
         dtype=dtype,
         scheduler=cfg.model.scheduler,
-        beta=cfg.model.beta,
-        enable_temp_scheduling=cfg.model.enable_temp_scheduling,
+        discretization_strategy=cfg.model.discretization_strategy,
     )
 
     if cfg.lora.use_lora:
@@ -408,6 +405,12 @@ def finetune(cfg: DictConfig):
         )
     data_collator = ReftDataCollator(data_collator=data_collator_fn)
 
+    entropy_loss_mode = None
+    if cfg.model.discretization_strategy == "binary_entropy":
+        entropy_loss_mode = "binary"
+    elif cfg.model.discretization_strategy == "single_entropy":
+        entropy_loss_mode = "single"
+
     # training args
     training_args = ReftTrainingArguments(
         output_dir=f"{cfg.logging.output_dir}/{run_name}",
@@ -432,8 +435,6 @@ def finetune(cfg: DictConfig):
         lr_scheduler_type=cfg.training.schedule,
         learning_rate=cfg.training.learning_rate,
         warmup_ratio=cfg.training.warmup_ratio,
-        token_sparsity_loss_weight=cfg.training.token_sparsity_loss_weight,
-        token_binary_loss_weight=cfg.training.binary_loss_weight,
         task_config=task_config,
         optim="adamw_torch",
         weight_decay=cfg.training.weight_decay,
@@ -441,6 +442,8 @@ def finetune(cfg: DictConfig):
         use_cpu=False if device in ["cuda", "mps"] else True,
         seed=cfg.training.seed,
         remove_unused_columns=False,
+        entropy_loss_mode=entropy_loss_mode,
+        entropy_loss_weight=cfg.training.entropy_loss_weight
     )
 
     # make trainer

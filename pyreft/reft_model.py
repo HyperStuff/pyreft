@@ -1,13 +1,11 @@
-from gc import enable
-import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-
 import pyvene as pv
 import torch
 from pyvene.models.basic_utils import get_batch_size
 from pyvene.models.intervenable_base import IntervenableModelOutput
 from pyvene.models.interventions import CollectIntervention
+from pyreft.token_selection import ScaledDotProductAttention, DiscreteTokenSelection
 
 
 def count_parameters(model):
@@ -23,82 +21,6 @@ class TokenSelectiveIntervenableModelOutput(IntervenableModelOutput):
     intervened_outputs: Optional[Any] = None
     collected_activations: Optional[Any] = None
     token_weights: Optional[torch.Tensor] = None
-
-
-class TokenSelectionAttention(torch.nn.Module):
-    def __init__(
-        self,
-        embed_dim: int,
-        num_heads: int,
-        start_temperature: float,
-        end_temperature: int,
-        total_steps: int,
-        dropout: float = 0.0,
-        dtype: torch.dtype = torch.float32,
-        scheduler: str = "linear",
-        beta: float = 12,
-        enable_temp_scheduling: bool = True,
-    ) -> None:
-        super().__init__()
-
-        self.embed_dim = embed_dim
-        self.num_heads = num_heads
-        self.start_temperature = start_temperature
-        self.end_temperature = end_temperature
-        self.total_steps = total_steps
-        self.dtype = dtype
-        self.scheduler = scheduler
-        self.beta = beta
-
-        self.temperature = torch.nn.Parameter(
-            torch.ones(1, 1, 1, dtype=dtype) * self.start_temperature,
-            requires_grad=False,
-        )
-
-        self.attn = torch.nn.MultiheadAttention(
-            self.embed_dim,
-            self.num_heads,
-            dropout=dropout,
-            dtype=dtype,
-        )
-        self.layernorm = torch.nn.LayerNorm(self.embed_dim, dtype=dtype)
-        self.down_proj = torch.nn.Linear(self.embed_dim, 1, dtype=dtype)
-        self._current_step = 0
-        self.enable_temp_scheduling = enable_temp_scheduling
-
-        self.register_backward_hook(self._update_temperature)
-
-    def _update_temperature(self, *args):
-        self._current_step = min(self._current_step + 1, self.total_steps)
-
-        if self.scheduler == "linear":
-            current_temp = self.start_temperature + (
-                self.end_temperature - self.start_temperature
-            ) * (self._current_step / self.total_steps)
-        elif self.scheduler == "cosine":
-            current_temp = self.start_temperature + (
-                self.end_temperature - self.start_temperature
-            ) * 0.5 * (1 + math.cos(math.pi * self._current_step / self.total_steps))
-        elif self.scheduler == "sigmoid":
-            current_temp = self.start_temperature + (
-                self.end_temperature - self.start_temperature
-            ) * 1 / (
-                1 + math.exp(-self.beta * (self._current_step / self.total_steps - 0.5))
-            )
-
-        self.temperature.data.fill_(current_temp)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Uses bidirectional self-attention to compute token weights."""
-        out, _ = self.attn(x, x, x)
-        out = self.layernorm(out)
-
-        if self.enable_temp_scheduling:
-            return torch.nn.functional.sigmoid(
-                self.down_proj(out) / self.temperature,
-            )
-        else:
-            return torch.nn.functional.sigmoid(self.down_proj(out))
 
 
 class ReftModel(pv.IntervenableModel):
@@ -159,18 +81,22 @@ class AutomatedReftModel(ReftModel):
             "do_token_selective_intervention",
             False,
         )
+
         if self.do_token_selective_intervention:
-            self.selection_module = TokenSelectionAttention(
+            self.use_attn_weights_for_selection = kwargs.get("use_attn_weights", False)
+            self.selection_module = ScaledDotProductAttention(
+                kwargs.get("embed_dim", 768)
+            )
+            self.discrete_selector = DiscreteTokenSelection(
                 embed_dim=kwargs.get("embed_dim", 768),
-                num_heads=kwargs.get("num_selection_attn_heads", 1),
                 start_temperature=kwargs.get("start_temperature", 1.0),
                 end_temperature=kwargs.get("end_temperature", 0.1),
                 total_steps=kwargs.get("max_steps", 1000),
-                dropout=kwargs.get("dropout", 0.0),
                 dtype=kwargs.get("dtype", torch.bfloat16),
                 scheduler=kwargs.get("scheduler", "linear"),
-                beta=kwargs.get("beta", 12),
-                enable_temp_scheduling=kwargs.get("enable_temp_scheduling", True),
+                discretization_strategy=kwargs.get(
+                    "discretization_strategy", "binary_concrete"
+                ),
             )
 
     def _broadcast_subspaces(self, batch_size, subspaces):
@@ -295,7 +221,13 @@ class AutomatedReftModel(ReftModel):
             else:
                 raise NotImplementedError
 
-            token_weights = self.selection_module(embed_out)
+            attn_out, attn_weights = self.selection_module(
+                embed_out, embed_out, embed_out
+            )
+            if self.use_attn_weights_for_selection:
+                token_weights = self.discrete_selector(attn_weights)
+            else:
+                token_weights = self.discrete_selector(attn_out)
             subspaces[0]["token_weights"] = token_weights
         else:
             token_weights = None
@@ -463,7 +395,14 @@ class AutomatedReftModel(ReftModel):
                 raise NotImplementedError
 
             # Unit locations are repeated for beam search to expand effective bsz
-            token_weights = self.selection_module(embed_out).repeat_interleave(
+            attn_out, attn_weights = self.selection_module(
+                embed_out, embed_out, embed_out
+            )
+            if self.use_attn_weights_for_selection:
+                token_weights = self.discrete_selector(attn_weights)
+            else:
+                token_weights = self.discrete_selector(attn_out)
+            token_weights = token_weights.repeat_interleave(
                 kwargs.get("num_beams", 1),
                 dim=0,
             )

@@ -22,6 +22,8 @@ from transformers.trainer_utils import (
 )
 from transformers.utils import logging
 
+from pyreft.token_selection import compute_entropy_loss
+
 logger = logging.get_logger(__name__)
 
 
@@ -29,13 +31,14 @@ logger = logging.get_logger(__name__)
 class ReftDataCollator:
     """Collate examples for ReFT."""
 
-    data_collator: DataCollator # type: ignore
+    data_collator: DataCollator  # type: ignore
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
         batch_inputs = self.data_collator(instances)
         max_seq_length = batch_inputs["input_ids"].shape[-1]
         batch_inputs["intervention_locations"] = batch_inputs["intervention_locations"][
-            ..., :max_seq_length,
+            ...,
+            :max_seq_length,
         ]
         return batch_inputs
 
@@ -52,17 +55,24 @@ def make_data_collator(tokenizer, model) -> ReftDataCollator:
 
 
 def make_dataloader(
-    dataset: Dataset, batch_size: int, collate_fn: DataCollatorForSeq2Seq, shuffle: bool,
+    dataset: Dataset,
+    batch_size: int,
+    collate_fn: DataCollatorForSeq2Seq,
+    shuffle: bool,
 ) -> DataLoader:
     return DataLoader(
-        dataset, shuffle=shuffle, batch_size=batch_size, collate_fn=collate_fn,
+        dataset,
+        shuffle=shuffle,
+        batch_size=batch_size,
+        collate_fn=collate_fn,
     )
 
 
 @dataclass
 class ReftTrainingArguments(TrainingArguments):
-    token_sparsity_loss_weight: float = 0.0
-    token_binary_loss_weight: float = 0.0
+    # Arguments for training
+    entropy_loss_weight: float = 0.0
+    entropy_loss_mode: Optional[str] = None
     # New arguments for evaluation
     task: str = "glue"
     dataset_name: str = "mnli"
@@ -76,22 +86,27 @@ class ReftTrainingArguments(TrainingArguments):
 
 class ReftTrainer(Trainer):
     def save_model(self, output_dir: str, *, _internal_call: bool = False) -> None:
-            if not Path(output_dir).exists():
-                Path(output_dir).mkdir(parents=True)
-            self.model.save_intervention(
-                save_directory=f"{output_dir}/intervenable_model", include_model=True,
-            )
+        if not Path(output_dir).exists():
+            Path(output_dir).mkdir(parents=True)
+        self.model.save_intervention(
+            save_directory=f"{output_dir}/intervenable_model",
+            include_model=True,
+        )
 
     def _load_best_model(self):
         logger.warning(
             f"Loading best model from {self.state.best_model_checkpoint} (score: {self.state.best_metric}).",
         )
         self.model.load_intervention(
-            f"{self.state.best_model_checkpoint}/intervenable_model", include_model=True,
+            f"{self.state.best_model_checkpoint}/intervenable_model",
+            include_model=True,
         )
 
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
+        self,
+        intervenable: pv.IntervenableModel,
+        inputs,
+        return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -100,8 +115,7 @@ class ReftTrainer(Trainer):
                 unit_locations = {
                     "sources->base": (
                         None,
-                        inputs["intervention_locations"].permute(
-                            1, 0, 2).tolist(),
+                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
                     ),
                 }
             else:
@@ -128,7 +142,10 @@ class ReftTrainer(Trainer):
 
 class TokenSelectiveReftTrainer(ReftTrainer):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
+        self,
+        intervenable: pv.IntervenableModel,
+        inputs,
+        return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -137,8 +154,7 @@ class TokenSelectiveReftTrainer(ReftTrainer):
                 unit_locations = {
                     "sources->base": (
                         None,
-                        inputs["intervention_locations"].permute(
-                            1, 0, 2).tolist(),
+                        inputs["intervention_locations"].permute(1, 0, 2).tolist(),
                     ),
                 }
             else:
@@ -163,26 +179,24 @@ class TokenSelectiveReftTrainer(ReftTrainer):
             base_outputs, cf_outputs, token_weights = _intervened_out
 
         if token_weights is not None:
-            # Compute sparsity loss if enabled
-            sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
-                torch.sum(token_weights, dim=-1),
-            )
-            # Compute binary loss if enabled
-            binary_loss = (
-                self.args.token_binary_loss_weight
-                * (token_weights * (1 - token_weights)).mean()
-            )
+            if self.args.entropy_loss_mode:
+                entropy_loss = compute_entropy_loss(
+                    token_weights, mode=self.args.entropy_loss_mode
+                )
+            else:
+                entropy_loss = None
 
             # Log metrics about token weights
             self.log(
                 {
-                    "train/sparsity_loss": sparsity_loss.cpu().item(),
-                    "train/binary_loss": binary_loss.cpu().item(),
-                    "train/mean_token_weight": token_weights.mean().cpu().item(),
-                    "train/token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
-                    "train/token_weight_max": token_weights.max().item(),
-                    "train/token_weight_min": token_weights.min().item(),
-                    "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
+                    "mean_token_weight": token_weights.mean().cpu().item(),
+                    "token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
+                    "token_weight_max": token_weights.max().item(),
+                    "token_weight_min": token_weights.min().item(),
+                    "token_weight_temperatures": intervenable.selection_module.get_temperature(),
+                    "entropy_loss": entropy_loss.cpu().item()
+                    if entropy_loss is not None
+                    else None,
                 },
             )
 
@@ -191,8 +205,8 @@ class TokenSelectiveReftTrainer(ReftTrainer):
         if cf_outputs is None:
             output = base_outputs  # in case of lora only training
 
-        if token_weights is not None:
-            output.loss += sparsity_loss + binary_loss
+        if token_weights is not None and entropy_loss is not None:
+            output.loss += self.args.entropy_loss_weight * entropy_loss
 
         return (output, output) if return_outputs else output.loss
 
@@ -200,20 +214,29 @@ class TokenSelectiveReftTrainer(ReftTrainer):
 class ReftTrainerForCausalLM(ReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
         return make_dataloader(
-            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True,
+            self.train_dataset,
+            self._train_batch_size,
+            self.data_collator,
+            shuffle=True,
         )
 
 
 class TokenSelectiveReftTrainerForCausalLM(TokenSelectiveReftTrainer):
     def get_train_dataloader(self) -> DataLoader:
         return make_dataloader(
-            self.train_dataset, self._train_batch_size, self.data_collator, shuffle=True,
+            self.train_dataset,
+            self._train_batch_size,
+            self.data_collator,
+            shuffle=True,
         )
 
 
 class ReftTrainerForSequenceClassification(ReftTrainer):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
+        self,
+        intervenable: pv.IntervenableModel,
+        inputs,
+        return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -255,14 +278,14 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         if problem_type == "regression":
             loss_fct = MSELoss()
             if self.model.model.num_labels == 1:
-                loss = loss_fct(logits.squeeze(),
-                                labels.squeeze().to(torch.bfloat16))
+                loss = loss_fct(logits.squeeze(), labels.squeeze().to(torch.bfloat16))
             else:
                 loss = loss_fct(logits, labels.to(torch.bfloat16))
         elif problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(
-                logits.view(-1, self.model.model.num_labels), labels.view(-1),
+                logits.view(-1, self.model.model.num_labels),
+                labels.view(-1),
             )
         elif problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
@@ -285,7 +308,10 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
         intervenable = self.model
 
         dataloader = make_dataloader(
-            eval_dataset, batch_size, data_collator, shuffle=False,
+            eval_dataset,
+            batch_size,
+            data_collator,
+            shuffle=False,
         )
 
         logger.info("***** Running In-Training Evaluation *****")
@@ -313,8 +339,7 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
                         "input_ids": inputs["input_ids"],
                         "attention_mask": inputs["attention_mask"],
                     },
-                    unit_locations={
-                        "sources->base": (None, intervention_locations)},
+                    unit_locations={"sources->base": (None, intervention_locations)},
                 )
 
                 all_preds += [cf_outputs.logits]
@@ -333,16 +358,24 @@ class ReftTrainerForSequenceClassification(ReftTrainer):
 
         self.log(metrics)
         self.control = self.callback_handler.on_evaluate(
-            self.args, self.state, self.control, metrics,
+            self.args,
+            self.state,
+            self.control,
+            metrics,
         )
         self._memory_tracker.stop_and_update_metrics(metrics)
 
         return metrics
 
 
-class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrainer, ReftTrainerForSequenceClassification):
+class TokenSelectiveReftTrainerForSequenceClassification(
+    TokenSelectiveReftTrainer, ReftTrainerForSequenceClassification
+):
     def compute_loss(
-        self, intervenable: pv.IntervenableModel, inputs, return_outputs=False,
+        self,
+        intervenable: pv.IntervenableModel,
+        inputs,
+        return_outputs=False,
     ):
         # run intervened forward pass
         unit_locations = None
@@ -391,44 +424,43 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         if problem_type == "regression":
             loss_fct = MSELoss()
             if self.model.model.num_labels == 1:
-                loss = loss_fct(logits.squeeze(),
-                                labels.squeeze().to(torch.bfloat16))
+                loss = loss_fct(logits.squeeze(), labels.squeeze().to(torch.bfloat16))
             else:
                 loss = loss_fct(logits, labels.to(torch.bfloat16))
         elif problem_type == "single_label_classification":
             loss_fct = CrossEntropyLoss()
             loss = loss_fct(
-                logits.view(-1, self.model.model.num_labels), labels.view(-1),
+                logits.view(-1, self.model.model.num_labels),
+                labels.view(-1),
             )
         elif problem_type == "multi_label_classification":
             loss_fct = BCEWithLogitsLoss()
             loss = loss_fct(logits, labels)
 
         if token_weights is not None:
-            # Compute sparsity loss if enabled
-            sparsity_loss = self.args.token_sparsity_loss_weight * torch.mean(
-                torch.sum(token_weights, dim=-1),
-            )
-            # Compute binary loss if enabled
-            binary_loss = (
-                self.args.token_binary_loss_weight
-                * (token_weights * (1 - token_weights)).mean()
-            )
+            if self.args.entropy_loss_mode:
+                entropy_loss = compute_entropy_loss(
+                    token_weights, mode=self.args.entropy_loss_mode
+                )
+            else:
+                entropy_loss = None
 
             # Log metrics about token weights
             self.log(
                 {
-                    "train/sparsity_loss": sparsity_loss.cpu().item(),
-                    "train/binary_loss": binary_loss.cpu().item(),
-                    "train/mean_token_weight": token_weights.mean().cpu().item(),
-                    "train/token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
-                    "train/token_weight_max": token_weights.max().item(),
-                    "train/token_weight_min": token_weights.min().item(),
-                    "train/token_weight_temperatures": intervenable.selection_module.temperature.item(),
+                    "mean_token_weight": token_weights.mean().cpu().item(),
+                    "token_weight_l0": token_weights.sum(dim=-1).float().mean().item(),
+                    "token_weight_max": token_weights.max().item(),
+                    "token_weight_min": token_weights.min().item(),
+                    "token_weight_temperatures": intervenable.discrete_selector.get_temperature(),
+                    "entropy_loss": entropy_loss.cpu().item()
+                    if entropy_loss is not None
+                    else None,
                 },
             )
 
-            loss += sparsity_loss + binary_loss
+            if entropy_loss is not None:
+                loss += self.args.entropy_loss_weight * entropy_loss
 
         return (loss, cf_outputs) if return_outputs else loss
 
@@ -447,7 +479,10 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
         intervenable = self.model
 
         dataloader = make_dataloader(
-            eval_dataset, batch_size, data_collator, shuffle=False,
+            eval_dataset,
+            batch_size,
+            data_collator,
+            shuffle=False,
         )
 
         logger.info("***** Running In-Training Evaluation *****")
@@ -475,8 +510,7 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
                         "input_ids": inputs["input_ids"],
                         "attention_mask": inputs["attention_mask"],
                     },
-                    unit_locations={
-                        "sources->base": (None, intervention_locations)},
+                    unit_locations={"sources->base": (None, intervention_locations)},
                 )
 
                 all_preds += [cf_outputs.logits]
@@ -495,7 +529,10 @@ class TokenSelectiveReftTrainerForSequenceClassification(TokenSelectiveReftTrain
 
         self.log(metrics)
         self.control = self.callback_handler.on_evaluate(
-            self.args, self.state, self.control, metrics,
+            self.args,
+            self.state,
+            self.control,
+            metrics,
         )
         self._memory_tracker.stop_and_update_metrics(metrics)
 
