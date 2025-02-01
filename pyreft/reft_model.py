@@ -1,12 +1,11 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
-from numpy import dtype
 import pyvene as pv
-from ray import get
 import torch
 from pyvene.models.basic_utils import get_batch_size
 from pyvene.models.intervenable_base import IntervenableModelOutput
 from pyvene.models.interventions import CollectIntervention
+from pyreft.interventions import QuasiProjectiveReftIntervention
 from pyreft.token_selection import ScaledDotProductAttention, DiscreteTokenSelection
 
 
@@ -233,6 +232,19 @@ class AutomatedReftModel(ReftModel):
             subspaces[0]["token_weights"] = token_weights
         else:
             token_weights = None
+
+        if any(
+            t == QuasiProjectiveReftIntervention for t in self.config.intervention_types
+        ):
+            subspaces = [{}]
+            # Get embeddings for QuasiProjectiveIntervention
+            if hasattr(self.model.model, "wte"):
+                hidden_states = self.model.model.wte(base["input_ids"])
+            elif hasattr(self.model.model, "embed_tokens"):
+                hidden_states = self.model.model.embed_tokens(base["input_ids"])
+            else:
+                raise NotImplementedError
+            subspaces[0]["hidden_states"] = hidden_states
 
         # broadcast
         unit_locations = self._broadcast_unit_locations(

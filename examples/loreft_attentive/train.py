@@ -9,6 +9,7 @@ import numpy as np
 import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
+from pyreft.interventions import QuasiProjectiveReftIntervention
 from task_config import task_config
 from transformers import (
     AutoConfig,
@@ -80,6 +81,7 @@ intervention_mapping = {
     "DireftIntervention": DireftIntervention,
     "NodireftIntervention": NodireftIntervention,
     "TokenSelectiveLoreftIntervention": TokenSelectiveLoreftIntervention,
+    "QuasiProjectiveIntervention": QuasiProjectiveReftIntervention,
 }
 
 
@@ -107,7 +109,7 @@ def finetune(cfg: DictConfig):
     print(
         f"task: {cfg.task.name}, model: {cfg.model.name}, "
         f"intervention_type: {cfg.intervention.type}, "
-        f"layers: {cfg.intervention.layers}, rank: {cfg.intervention.rank}, "
+        f"layers: {cfg.intervention.layers}, rank: {cfg.intervention.low_rank_dimension}, "
         f"position: {cfg.intervention.position}, epoch: {cfg.training.epochs}, "
         f"train_on_inputs: {cfg.task.train_on_inputs}, "
         f"max_length: {cfg.model.max_length}, allow_cls_grad: {cfg.task.allow_cls_grad}",
@@ -159,7 +161,7 @@ def finetune(cfg: DictConfig):
         padding_side="right",
         use_fast=False,
     )
-    if tokenizer.unk_token == None and tokenizer.pad_token == None:
+    if tokenizer.unk_token is None and tokenizer.pad_token is None:
         print("adding a special padding token...")
         tokenizer.add_special_tokens({"pad_token": "[PAD]"})
         need_resize = True
@@ -306,21 +308,18 @@ def finetune(cfg: DictConfig):
     intervention_dtype = torch.bfloat16 if isinstance(dtype, str) else dtype
 
     intervention_obj = intervention_type(
-        num_heads=cfg.intervention.num_heads,
         embed_dim=model.config.hidden_size,
-        low_rank_dimension=cfg.intervention.rank,
         dropout=cfg.training.dropout,
         dtype=intervention_dtype,
-        act_fn=cfg.intervention.act_fn,
         device=device,
-        add_bias=cfg.intervention.add_bias,
+        **OmegaConf.to_container(cfg.intervention),
     )
 
     if model_arch in residual_stream_component_mapping:
         representations = [
             {
                 "component": residual_stream_component_mapping[model_arch] % l,
-                "low_rank_dimension": cfg.intervention.rank,
+                "low_rank_dimension": cfg.intervention.low_rank_dimension,
                 "intervention": intervention_obj,
             }
             for l in layers
@@ -333,7 +332,7 @@ def finetune(cfg: DictConfig):
                 "component": f"base_model.model.model.layers[{l}].output"
                 if cfg.lora.use_lora
                 else "block_output",
-                "low_rank_dimension": cfg.intervention.rank,
+                "low_rank_dimension": cfg.intervention.low_rank_dimension,
                 "intervention": intervention_obj,
             }
             for l in layers
@@ -443,7 +442,7 @@ def finetune(cfg: DictConfig):
         seed=cfg.training.seed,
         remove_unused_columns=False,
         entropy_loss_mode=entropy_loss_mode,
-        entropy_loss_weight=cfg.training.entropy_loss_weight
+        entropy_loss_weight=cfg.training.entropy_loss_weight,
     )
 
     # make trainer

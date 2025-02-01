@@ -20,7 +20,7 @@ model:
   do_token_selection: true
   use_attn_weights: false
   scheduler: linear
-  discretization_strategy: default_sigmoid
+  discretization_strategy: binary_concrete
 
 # Training settings
 training:
@@ -43,17 +43,24 @@ training:
 
 # Intervention settings
 intervention:
-  type: "TokenSelectiveLoreftIntervention"
+  type: "QuasiProjectiveIntervention"
   layers: "2;10;18;26"
-  rank: 8
-  position: "f2048"
-  act_fn: null
+  dict_size: 64
+  low_rank_dimension: 8
+  top_k_parameter: 8
+  lambda_parameter: 0.1
+  epsilon: 1e-6
+  importance_power: -2
+  selection_mechanism: "dynamic"
+  scoring_dimension: 64
+  orthogonal_init: true
+  hat_matrix: false
+  return_penalty: false
   add_bias: false
   share_weights: true
-  # For token selective attn module
-  num_heads: 4
-  start_temperature: 1
-  end_temperature: 1e-3
+  position: "f2048"
+  num_heads: 1
+  act_fn: null
 
 # LoRA settings
 lora:
