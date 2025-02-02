@@ -395,7 +395,7 @@ class QuasiProjectiveReftIntervention(
             )
 
         # Base:     batch x seq x d_embed
-        # Source:   batch x seq x d_embed
+        # Source:   batch x seq x di_embed
         # Hidden:   batch x instruction_seq x d_embed
         normalized_hidden_state = self.input_layernorm(
             hidden_states[:, -1, :]
@@ -408,7 +408,7 @@ class QuasiProjectiveReftIntervention(
         normalized_base = self.base_layernorm(base)
         normalized_source = self.source_layernorm(
             self.learned_source(base.to(self.learned_source.weight.dtype))
-        ).to(base.dtype)
+        ).to(normalized_base.dtype)
 
         # Perform top-k index selection
         # top_k_indices: batch x k; top_k_values: batch x k

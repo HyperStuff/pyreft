@@ -236,7 +236,8 @@ class AutomatedReftModel(ReftModel):
         if any(
             t == QuasiProjectiveReftIntervention for t in self.config.intervention_types
         ):
-            subspaces = [{}]
+            if not subspaces:
+                subspaces = [{}]
             # Get embeddings for QuasiProjectiveIntervention
             if hasattr(self.model.model, "wte"):
                 hidden_states = self.model.model.wte(base["input_ids"])
