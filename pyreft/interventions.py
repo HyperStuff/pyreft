@@ -406,9 +406,10 @@ class QuasiProjectiveReftIntervention(
 
         # Normalize base and source prior to regression
         normalized_base = self.base_layernorm(base)
-        normalized_source = self.source_layernorm(
-            self.learned_source(base.to(self.learned_source.weight.dtype))
-        ).to(normalized_base.dtype)
+        learned_source = self.learned_source(base.to(self.learned_source.weight.dtype))
+        normalized_source = self.source_layernorm(learned_source).to(
+            normalized_base.dtype
+        )
 
         # Perform top-k index selection
         # top_k_indices: batch x k; top_k_values: batch x k
@@ -444,6 +445,12 @@ class QuasiProjectiveReftIntervention(
             selected_dictionary = self.dictionary(top_k_values).reshape(
                 -1, self.dict_size, self.embed_dim
             )
+
+        print(
+            f"{selected_dictionary.shape=}, {normalized_base.shape=}, {normalized_source.shape=}, {base.shape=}, {learned_source.shape=}"
+        )
+        if not selected_dictionary.requires_grad:
+            breakpoint()
 
         base_interchange, base_metrics = self.compute_closeform_ridge(
             selected_dictionary,
