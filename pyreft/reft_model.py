@@ -425,6 +425,20 @@ class AutomatedReftModel(ReftModel):
         else:
             token_weights = None
 
+        if any(
+            t == QuasiProjectiveReftIntervention for t in self.config.intervention_types
+        ):
+            if not subspaces:
+                subspaces = [{}]
+            # Get embeddings for QuasiProjectiveIntervention
+            if hasattr(self.model.model, "wte"):
+                hidden_states = self.model.model.wte(base["input_ids"])
+            elif hasattr(self.model.model, "embed_tokens"):
+                hidden_states = self.model.model.embed_tokens(base["input_ids"])
+            else:
+                raise NotImplementedError
+            subspaces[0]["hidden_states"] = hidden_states
+
         # broadcast
         unit_locations = self._broadcast_unit_locations(
             get_batch_size(base),
