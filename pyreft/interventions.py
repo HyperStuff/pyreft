@@ -446,12 +446,6 @@ class QuasiProjectiveReftIntervention(
                 -1, self.dict_size, self.embed_dim
             )
 
-        print(
-            f"{selected_dictionary.shape=}, {normalized_base.shape=}, {normalized_source.shape=}, {base.shape=}, {learned_source.shape=}"
-        )
-        if not selected_dictionary.requires_grad:
-            breakpoint()
-
         base_interchange, base_metrics = self.compute_closeform_ridge(
             selected_dictionary,
             normalized_base,
